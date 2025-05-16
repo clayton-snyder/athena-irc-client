@@ -8,6 +8,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#define BUFF_LEN 1024 * 8
+
 void print_addr_info(struct addrinfo* addr_info);
 
 int main(int argc, char* argv[]) {
@@ -79,6 +81,57 @@ int main(int argc, char* argv[]) {
 
     printf("Connected, apparently.\n");
 
+    const char *send_buff = "GET / HTTP/1.0\r\n\r\n";
+
+    result = send(sock, send_buff, (int)strlen(send_buff), 0);
+    if (result == SOCKET_ERROR) {
+        printf("send() failed: %ld\n", WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return 8;
+    }
+
+    // We're done sending data.
+    result = shutdown(sock, SD_SEND);
+    if (result == SOCKET_ERROR) {
+        printf("shutdown() failed: %ld\n", WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return 10;
+    }
+
+    // TODO: Handle buffer overflow without truncating
+    char recv_buff[BUFF_LEN];
+    int bytes_total = 0;
+    int bytes_curr = recv(sock, recv_buff, BUFF_LEN, 0);
+    while (bytes_curr > 0) {
+        printf("Received %d bytes...\n", bytes_curr);
+        bytes_total += bytes_curr;
+
+        // Offset recv_buff by how many bytes we've already received
+        bytes_curr = recv(
+                sock,
+                (char*)recv_buff + bytes_total,
+                BUFF_LEN - bytes_total,
+                0
+            );
+    }
+
+    if (bytes_curr < 0) {
+        printf("recv() failed: %ld\n", WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return 9;
+    }
+
+    recv_buff[(bytes_total >= BUFF_LEN ? BUFF_LEN - 1 : bytes_total)] = '\0';
+
+    printf("Response:\n----\n%s\n----\n", recv_buff);
+    printf("Connection closed. Received %d total bytes.\n", bytes_total);
+
+    if (bytes_total >= BUFF_LEN) 
+        printf("WARNING: Ran out of buffer; result is truncated.\n");
+
     closesocket(sock);
     WSACleanup();
 
@@ -98,7 +151,6 @@ void print_addr_info(struct addrinfo* addr_info) {
         char buff[16];
         inet_ntop(AF_INET, &v4->sin_addr, (char*)&buff, sizeof(buff));
         printf("(IPv4) %s\n", buff);
-
     } else if (addr_info->ai_family == AF_INET6) {
         struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) addr_info->ai_addr;
         char buff[46];
