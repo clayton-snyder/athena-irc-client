@@ -81,56 +81,43 @@ int main(int argc, char* argv[]) {
 
     printf("Connected, apparently.\n");
 
-    const char *send_buff = "GET / HTTP/1.0\r\n\r\n";
+    const char *send_buff[2] = {
+        "NICK code\r\n",
+        "USER ircC 0 * :AthenaIRC Client\r\n"
+    };
 
-    result = send(sock, send_buff, (int)strlen(send_buff), 0);
-    if (result == SOCKET_ERROR) {
-        printf("send() failed: %ld\n", WSAGetLastError());
-        closesocket(sock);
-        WSACleanup();
-        return 8;
+    for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
+        result = send(sock, send_buff[i], (int)strlen(send_buff[i]), 0);
+        if (result == SOCKET_ERROR) {
+            printf("send() failed: %ld\n", WSAGetLastError());
+            closesocket(sock);
+            WSACleanup();
+            return 8;
+        }
+        printf("Sent: %s\n", send_buff[i]);
     }
 
-    // We're done sending data.
-    result = shutdown(sock, SD_SEND);
-    if (result == SOCKET_ERROR) {
-        printf("shutdown() failed: %ld\n", WSAGetLastError());
-        closesocket(sock);
-        WSACleanup();
-        return 10;
-    }
-
-    // TODO: Handle buffer overflow without truncating
     char recv_buff[BUFF_LEN];
-    int bytes_total = 0;
-    int bytes_curr = recv(sock, recv_buff, BUFF_LEN, 0);
-    while (bytes_curr > 0) {
-        printf("Received %d bytes...\n", bytes_curr);
-        bytes_total += bytes_curr;
+    int bytes_received = 0;
+    while ((bytes_received = recv(sock, recv_buff, BUFF_LEN, 0)) > 0) {
+        if (bytes_received < BUFF_LEN) {
+            recv_buff[bytes_received] = '\0';
+        } else {
+            recv_buff[BUFF_LEN - 1] = '\0';
+            printf("WARNING: Ran out of buffer, result is truncated.\n");
+        }
 
-        // Offset recv_buff by how many bytes we've already received
-        bytes_curr = recv(
-                sock,
-                (char*)recv_buff + bytes_total,
-                BUFF_LEN - bytes_total,
-                0
-            );
+        printf("RECEIVED:\n---\n%s\n---\n", recv_buff);
     }
 
-    if (bytes_curr < 0) {
+    if (bytes_received < 0) {
         printf("recv() failed: %ld\n", WSAGetLastError());
         closesocket(sock);
         WSACleanup();
         return 9;
     }
 
-    recv_buff[(bytes_total >= BUFF_LEN ? BUFF_LEN - 1 : bytes_total)] = '\0';
-
-    printf("Response:\n----\n%s\n----\n", recv_buff);
-    printf("Connection closed. Received %d total bytes.\n", bytes_total);
-
-    if (bytes_total >= BUFF_LEN) 
-        printf("WARNING: Ran out of buffer; result is truncated.\n");
+    printf("Connection closed by server.\n");
 
     closesocket(sock);
     WSACleanup();
