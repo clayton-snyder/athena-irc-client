@@ -1,16 +1,23 @@
-// Necessary if we include `windows.h`: #define WIN32_LEAN_AND_MEAN
+// Need this define to avoid windows.h #including winsock.h
+#define WIN32_LEAN_AND_MEAN
 
 #include <stdio.h>
-
-// If you uncomment this, be sure to `#define WIN32_LEAN_AND_MEAN` to prevent
-// transient inclusion of `winsock.h` which will conclict with `winsock2.h`.
-// #include <windows.h> 
+#include <windows.h>
 #include <winsock2.h>
-#include <ws2tcpip.h>
+//#include <ws2tcpip.h>
+
 
 #define BUFF_LEN 1024 * 8
 
+DWORD WINAPI thread_main_recv(LPVOID data);
 void print_addr_info(struct addrinfo* addr_info);
+
+
+char** msgs_in_takeall();
+void msgs_in_enqueue(char** new_msgs_in);
+
+
+
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
@@ -55,7 +62,7 @@ int main(int argc, char* argv[]) {
     SOCKET sock = socket(addr_info->ai_family, addr_info->ai_socktype,
             addr_info->ai_protocol);
     if (sock == INVALID_SOCKET) {
-        printf("socket() failed: %ld\n", WSAGetLastError());
+        printf("socket() failed: %lu\n", WSAGetLastError());
         freeaddrinfo(addr_info);
         WSACleanup();
         return 5;
@@ -63,7 +70,7 @@ int main(int argc, char* argv[]) {
 
     result = connect(sock, addr_info->ai_addr, (int)addr_info->ai_addrlen);    
     if (result == SOCKET_ERROR) {
-        printf("connect() failed: %ld\n", WSAGetLastError());
+        printf("connect() failed: %lu\n", WSAGetLastError());
         // TODO: Try every addr in the linked list (addrinfo.ai_next) 
         closesocket(sock);
         sock = INVALID_SOCKET;
@@ -89,7 +96,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
         result = send(sock, send_buff[i], (int)strlen(send_buff[i]), 0);
         if (result == SOCKET_ERROR) {
-            printf("send() failed: %ld\n", WSAGetLastError());
+            printf("send() failed: %lu\n", WSAGetLastError());
             closesocket(sock);
             WSACleanup();
             return 8;
@@ -111,7 +118,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (bytes_received < 0) {
-        printf("recv() failed: %ld\n", WSAGetLastError());
+        printf("recv() failed: %lu\n", WSAGetLastError());
         closesocket(sock);
         WSACleanup();
         return 9;
@@ -125,6 +132,15 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+struct thread_data_recv {
+    SOCKET* sock;
+    struct addrinfo *addr_info;
+};
+
+DWORD WINAPI thread_main_recv(LPVOID data) {
+    struct *thread_data_recv = (struct *thread_data_recv)data;
+    // CONTINUE: build the recv loop here. Need to declare the global inmsg q
+}
 void print_addr_info(struct addrinfo* addr_info) {
     printf("family:%d\nsocktype:%d\nprotocol:%d\naddrlen:%zu\ncanonname:%s\n",
             addr_info->ai_family,
