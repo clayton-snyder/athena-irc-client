@@ -1,0 +1,2 @@
+# Must be run from a Developer PS/cmd session. Run Launch-VsDevShell.ps1 first.
+cl main.c msgqueue.c ws2_32.lib /DWIN32_LEAN_AND_MEAN /Fe: client.exe

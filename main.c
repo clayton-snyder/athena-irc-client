@@ -1,23 +1,13 @@
-// Need this define to avoid windows.h #including winsock.h
-#define WIN32_LEAN_AND_MEAN
+#include "msgqueue.h"
 
 #include <stdio.h>
-#include <windows.h>
 #include <winsock2.h>
-//#include <ws2tcpip.h>
-
+#include <ws2tcpip.h>
 
 #define BUFF_LEN 1024 * 8
 
 DWORD WINAPI thread_main_recv(LPVOID data);
 void print_addr_info(struct addrinfo* addr_info);
-
-
-char** msgs_in_takeall();
-void msgs_in_enqueue(char** new_msgs_in);
-
-
-
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
@@ -26,7 +16,6 @@ int main(int argc, char* argv[]) {
     }
 
     printf("Ages ago, life was born in the primitive sea.\n");
-
 
     // Initiate use of WS2_32.dll, requesting version 2.2
     WSADATA wsa_data;
@@ -137,10 +126,12 @@ struct thread_data_recv {
     struct addrinfo *addr_info;
 };
 
+/*
 DWORD WINAPI thread_main_recv(LPVOID data) {
-    struct *thread_data_recv = (struct *thread_data_recv)data;
+    struct thread_data_recv *thread_data = (struct thread_data_recv*)data;
     // CONTINUE: build the recv loop here. Need to declare the global inmsg q
-}
+}*/
+
 void print_addr_info(struct addrinfo* addr_info) {
     printf("family:%d\nsocktype:%d\nprotocol:%d\naddrlen:%zu\ncanonname:%s\n",
             addr_info->ai_family,
