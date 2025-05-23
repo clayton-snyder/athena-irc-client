@@ -1,5 +1,7 @@
 #include "msgqueue.h"
 
+#include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -16,6 +18,9 @@ int main(int argc, char* argv[]) {
     }
 
     printf("Ages ago, life was born in the primitive sea.\n");
+    
+    // TODO: placement?
+    init_msg_queues();
 
     // Initiate use of WS2_32.dll, requesting version 2.2
     WSADATA wsa_data;
@@ -93,27 +98,23 @@ int main(int argc, char* argv[]) {
         printf("Sent: %s\n", send_buff[i]);
     }
 
-    char recv_buff[BUFF_LEN];
-    int bytes_received = 0;
-    while ((bytes_received = recv(sock, recv_buff, BUFF_LEN, 0)) > 0) {
-        if (bytes_received < BUFF_LEN) {
-            recv_buff[bytes_received] = '\0';
-        } else {
-            recv_buff[BUFF_LEN - 1] = '\0';
-            printf("WARNING: Ran out of buffer, result is truncated.\n");
+    // create thread
+    DWORD recv_thread_id = -1;
+    HANDLE recv_thread = CreateThread(
+            NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
+
+    // Continue: MAIN LOOP
+    while (1) {
+        msglist msgs_in = msg_queue_takeall(QUEUE_IN);
+        struct msgnode *curr_msgnode = msgs_in.head;
+        while (curr_msgnode != NULL) {
+            printf("[main] MSG_IN: %s\n", curr_msgnode->msg);
+            curr_msgnode = curr_msgnode->next;
         }
 
-        printf("RECEIVED:\n---\n%s\n---\n", recv_buff);
+        // UI msgs
+        // Out msgs
     }
-
-    if (bytes_received < 0) {
-        printf("recv() failed: %lu\n", WSAGetLastError());
-        closesocket(sock);
-        WSACleanup();
-        return 9;
-    }
-
-    printf("Connection closed by server.\n");
 
     closesocket(sock);
     WSACleanup();
@@ -121,16 +122,85 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-struct thread_data_recv {
-    SOCKET* sock;
-    struct addrinfo *addr_info;
-};
-
-/*
 DWORD WINAPI thread_main_recv(LPVOID data) {
-    struct thread_data_recv *thread_data = (struct thread_data_recv*)data;
-    // CONTINUE: build the recv loop here. Need to declare the global inmsg q
-}*/
+    SOCKET *sock = (SOCKET *)data;
+    char recv_buff[BUFF_LEN];
+    int bytes_received = 0, buff_offset = 0;
+    while ((bytes_received = recv(
+                    *sock,
+                    recv_buff + buff_offset,
+                    BUFF_LEN - buff_offset,
+                    0)) > 0)
+    {
+        buff_offset += bytes_received;
+        if (buff_offset >= BUFF_LEN) {
+            printf("[thread_main_recv] FATAL: Ran out of buffer.\n");
+            // TODO: communiate failure and clean up
+            exit(23);
+        }
+
+        // Start at end of the unprocessed data and search backwards for \r\n
+        int last_delim = buff_offset;
+        bool delim_found = false;
+        while (--last_delim > 0 && !delim_found) {
+            delim_found = recv_buff[last_delim - 1] = '\r' &&
+                          recv_buff[last_delim] == '\n';
+        }
+
+        // TODO: debug log
+        printf("[thread_main_recv] delim_found=%d, last_delim=%d, BUFF_LEN=%d,"
+                " bytes_received=%d, buff_offset=%d\n", delim_found, last_delim,
+                BUFF_LEN, bytes_received, buff_offset);
+
+        if (!delim_found)
+            continue;
+
+        // Parse recv_buffer data into messages and build a msglist
+        msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
+        size_t msg_start = 0;
+        for (size_t i = 0; i < last_delim; i++) {
+            if (!(recv_buff[i] == '\r' && recv_buff[i + 1] == '\n'))
+                continue;
+
+            // msglist msgs should be null terminated.
+            recv_buff[i] = '\0';
+            recv_buff[i + 1] = '\0';
+            msglist_pushback(&msgs, &recv_buff[msg_start]);
+
+            // TODO: debug log
+            printf("[thread_main_recv] new msg: %s\n", &recv_buff[msg_start]);
+
+            // Skip the two null terminators we wrote.
+            msg_start = i++ + 2;
+        }
+
+        if (msgs.count > 0) {
+            msglist_submit(QUEUE_IN, &msgs);
+            // TODO: Debug log
+            printf("[thread_main_recv] Submitted %d messages.\n", msgs.count);
+        }
+
+        assert(buff_offset < BUFF_LEN);
+        assert(last_delim < buff_offset);
+
+        // Move any buffer data after the last delim to the beginning.
+        size_t copy_from = last_delim + 1, copy_to = 0;
+        while (copy_from < buff_offset) 
+            recv_buff[copy_to++] = recv_buff[copy_from++];
+        buff_offset = copy_to;
+    }
+
+    if (bytes_received < 0) {
+        printf("recv() failed: %lu\n", WSAGetLastError());
+        // TODO: Communicate failure and cleanup
+        exit(23);
+    }
+
+    // TODO: debug log
+    printf("[thread_main_recv] Server disconnected, apparently.\n");
+
+    return 0;
+}
 
 void print_addr_info(struct addrinfo* addr_info) {
     printf("family:%d\nsocktype:%d\nprotocol:%d\naddrlen:%zu\ncanonname:%s\n",
