@@ -10,8 +10,8 @@
 
 static int b_initialized = false;
 
-static msglist msg_queue_in, msg_queue_out;
-static HANDLE mtx_msg_queue_in, mtx_msg_queue_out;
+static msglist msg_queue_in, msg_queue_out, msg_queue_ui;
+static HANDLE mtx_msg_queue_in, mtx_msg_queue_out, mtx_msg_queue_ui;
 
 // Returns false if no queue corresponding to `queue_id` was found. Otherwise,
 // p_queue and p_mtx will be populated with the corresponding msglist/mtx pair.
@@ -22,10 +22,12 @@ static void DEBUG_assert_msglist_valid(msglist *list);
 void init_msg_queues() {
     msg_queue_in.head = msg_queue_in.tail = NULL;
     msg_queue_out.head = msg_queue_out.tail = NULL;
-    msg_queue_in.count = msg_queue_out.count = 0;
+    msg_queue_ui.head = msg_queue_ui.tail = NULL;
+    msg_queue_in.count = msg_queue_out.count = msg_queue_ui.count = 0;
 
     mtx_msg_queue_in = CreateMutex(NULL, FALSE, NULL);
     mtx_msg_queue_out = CreateMutex(NULL, FALSE, NULL);
+    mtx_msg_queue_ui = CreateMutex(NULL, FALSE, NULL);
 
     b_initialized = true;
 }
@@ -175,6 +177,10 @@ static bool select_queue(msg_queue_id id, msglist **p_queue, HANDLE **p_mtx) {
     case QUEUE_OUT:
         *p_queue = &msg_queue_out;
         *p_mtx = &mtx_msg_queue_out;
+        return true;
+    case QUEUE_UI:
+        *p_queue = &msg_queue_ui;
+        *p_mtx = &mtx_msg_queue_ui;
         return true;
     default:
         *p_queue = NULL;

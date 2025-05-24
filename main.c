@@ -3,18 +3,21 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#define BUFF_LEN 1024 * 8
+#define RECV_BUFF_LEN 1024 * 8
+#define INPUT_BUFF_LEN 512 // max IRC message length. change this later
 
 DWORD WINAPI thread_main_recv(LPVOID data);
+DWORD WINAPI thread_main_ui(LPVOID data);
 void print_addr_info(struct addrinfo* addr_info);
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
         printf("Usage: client <hostname> <port>\n");
-        return 3;
+        return 23;
     }
 
     printf("Ages ago, life was born in the primitive sea.\n");
@@ -27,7 +30,7 @@ int main(int argc, char* argv[]) {
     int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     if (result != 0) {
         printf("WSAStartup failed, returned: %d\n", result);
-        return 1;
+        return 23;
     }
 
     WORD ver_hi = HIBYTE(wsa_data.wVersion);
@@ -36,7 +39,7 @@ int main(int argc, char* argv[]) {
     if (ver_hi != 2 || ver_lo != 2) {
         printf("Expected version 2.2. Aborting.\n");
         WSACleanup();
-        return 2;
+        return 23;
     }
 
     struct addrinfo hints, *addr_info = NULL;
@@ -49,7 +52,7 @@ int main(int argc, char* argv[]) {
     if (result != 0) {
         printf("getaddrinfo failed, returned: %d\n", result);
         WSACleanup();
-        return 4;
+        return 23;
     }
     print_addr_info(addr_info);
 
@@ -59,7 +62,7 @@ int main(int argc, char* argv[]) {
         printf("socket() failed: %lu\n", WSAGetLastError());
         freeaddrinfo(addr_info);
         WSACleanup();
-        return 5;
+        return 23;
     }
 
     result = connect(sock, addr_info->ai_addr, (int)addr_info->ai_addrlen);    
@@ -75,36 +78,40 @@ int main(int argc, char* argv[]) {
     freeaddrinfo(addr_info);
 
     if (sock == INVALID_SOCKET) {
-        printf("Unable to connect to %s:%s (", argv[1], argv[2]);
+        printf("Unable to connect to %s:%s", argv[1], argv[2]);
         WSACleanup();
-        return 6;
+        return 23;
     }
 
     printf("Connected, apparently.\n");
 
-    const char *send_buff[2] = {
+    const char *send_buff[] = {
         "NICK code\r\n",
-        "USER ircC 0 * :AthenaIRC Client\r\n"
+        "USER ircC 0 * :AthenaIRC Client\r\n",
+        "JOIN #codetest\r\n",
+        "PRIVMSG #codetest :All systems operational.\r\n"
     };
 
     for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
         result = send(sock, send_buff[i], (int)strlen(send_buff[i]), 0);
         if (result == SOCKET_ERROR) {
-            printf("send() failed: %lu\n", WSAGetLastError());
+            // TODO: debug log
+            printf("[main] init send() failed: %lu\n", WSAGetLastError());
             closesocket(sock);
             WSACleanup();
-            return 8;
+            return 23;
         }
         printf("Sent: %s\n", send_buff[i]);
     }
 
-    // create thread
-    DWORD recv_thread_id = -1;
+    DWORD recv_thread_id = -1, ui_thread_id = -1;
     HANDLE recv_thread = CreateThread(
             NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
+    HANDLE ui_thread = CreateThread(
+            NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
-    // Continue: MAIN LOOP
-    while (1) {
+    bool bye = false;
+    while (!bye) {
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
@@ -113,6 +120,34 @@ int main(int argc, char* argv[]) {
         }
 
         // UI msgs
+        msglist msgs_ui = msg_queue_takeall(QUEUE_UI);
+        curr_msgnode = msgs_ui.head;
+        while (curr_msgnode != NULL) {
+            char* msg = curr_msgnode->msg;
+            if (strcmp(msg, "BYE") == 0) {
+                printf("[main] received BYE command. BYE!\n");
+                bye = true;
+                break;
+            }
+
+            // We need to replace \0 with \r\n
+            size_t msg_len = strlen(msg) + 2;
+            assert(msg_len < INPUT_BUFF_LEN + 1);
+            char send_buff[INPUT_BUFF_LEN + 1];
+            strcpy(send_buff, msg);
+            send_buff[msg_len - 2] = '\r';
+            send_buff[msg_len - 1] = '\n';
+
+            result = send(sock, send_buff, msg_len, 0);
+            if (result == SOCKET_ERROR) {
+                // TODO: debug log
+                printf("[main] UI send() failed: %lu\n", WSAGetLastError());
+                closesocket(sock);
+                WSACleanup();
+                return 23;
+            }
+            curr_msgnode = curr_msgnode->next;
+        }
         // Out msgs
     }
 
@@ -122,35 +157,64 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+DWORD WINAPI thread_main_ui(LPVOID data) {
+    char buff[INPUT_BUFF_LEN];
+    msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
+
+    bool bye = false;
+    while (!bye) {
+        char* str = gets_s(buff, INPUT_BUFF_LEN);
+        if (str == NULL) {
+            // TODO: debug log
+            printf("[thread_main_ui] gets_s returned NULL.\n");
+            // TODO: communicate failure
+            return 23;
+        }
+        if (strcmp(str, "BYE") == 0) {
+            printf("[thread_main_ui] received BYE command. BYE!\n");
+            bye = true;
+        }
+        printf("[thread_main_ui] submitting: \"%s\"\n", str);
+
+        msglist_pushback(&msgs, str);
+        msglist_submit(QUEUE_UI, &msgs);
+        msgs.head = msgs.tail = NULL;
+        msgs.count = 0;
+    }
+
+    return 0;
+}
+
 DWORD WINAPI thread_main_recv(LPVOID data) {
     SOCKET *sock = (SOCKET *)data;
-    char recv_buff[BUFF_LEN];
-    int bytes_received = 0, buff_offset = 0;
+    char recv_buff[RECV_BUFF_LEN];
+    int bytes_received = 0, i_buff_offset = 0;
     while ((bytes_received = recv(
                     *sock,
-                    recv_buff + buff_offset,
-                    BUFF_LEN - buff_offset,
+                    recv_buff + i_buff_offset,
+                    RECV_BUFF_LEN - i_buff_offset,
                     0)) > 0)
     {
-        buff_offset += bytes_received;
-        if (buff_offset >= BUFF_LEN) {
+        i_buff_offset += bytes_received;
+        if (i_buff_offset >= RECV_BUFF_LEN) {
             printf("[thread_main_recv] FATAL: Ran out of buffer.\n");
             // TODO: communiate failure and clean up
             exit(23);
         }
 
         // Start at end of the unprocessed data and search backwards for \r\n
-        int last_delim = buff_offset;
+        int i_last_delim = i_buff_offset;
         bool delim_found = false;
-        while (--last_delim > 0 && !delim_found) {
-            delim_found = recv_buff[last_delim - 1] = '\r' &&
-                          recv_buff[last_delim] == '\n';
+        while (!delim_found && --i_last_delim > 0) {
+            delim_found = recv_buff[i_last_delim - 1] == '\r' &&
+                          recv_buff[i_last_delim] == '\n';
         }
 
         // TODO: debug log
-        printf("[thread_main_recv] delim_found=%d, last_delim=%d, BUFF_LEN=%d,"
-                " bytes_received=%d, buff_offset=%d\n", delim_found, last_delim,
-                BUFF_LEN, bytes_received, buff_offset);
+        printf("[thread_main_recv] delim_found=%d, i_last_delim=%d(%d), "
+                "bytes_received=%d, i_buff_offset=%d\n", delim_found,
+                i_last_delim, recv_buff[i_last_delim], bytes_received,
+                i_buff_offset);
 
         if (!delim_found)
             continue;
@@ -158,7 +222,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         // Parse recv_buffer data into messages and build a msglist
         msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
         size_t msg_start = 0;
-        for (size_t i = 0; i < last_delim; i++) {
+        for (size_t i = 0; i < i_last_delim; i++) {
             if (!(recv_buff[i] == '\r' && recv_buff[i + 1] == '\n'))
                 continue;
 
@@ -168,7 +232,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
             msglist_pushback(&msgs, &recv_buff[msg_start]);
 
             // TODO: debug log
-            printf("[thread_main_recv] new msg: %s\n", &recv_buff[msg_start]);
+            //printf("[thread_main_recv] new msg: %s\n", &recv_buff[msg_start]);
 
             // Skip the two null terminators we wrote.
             msg_start = i++ + 2;
@@ -177,17 +241,17 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         if (msgs.count > 0) {
             msglist_submit(QUEUE_IN, &msgs);
             // TODO: Debug log
-            printf("[thread_main_recv] Submitted %d messages.\n", msgs.count);
+            printf("[thread_main_recv] Submitted %d msgs to IN.\n", msgs.count);
         }
 
-        assert(buff_offset < BUFF_LEN);
-        assert(last_delim < buff_offset);
+        assert(i_buff_offset < RECV_BUFF_LEN);
+        assert(i_last_delim < i_buff_offset);
 
         // Move any buffer data after the last delim to the beginning.
-        size_t copy_from = last_delim + 1, copy_to = 0;
-        while (copy_from < buff_offset) 
+        size_t copy_from = i_last_delim + 1, copy_to = 0;
+        while (copy_from < i_buff_offset) 
             recv_buff[copy_to++] = recv_buff[copy_from++];
-        buff_offset = copy_to;
+        i_buff_offset = copy_to;
     }
 
     if (bytes_received < 0) {

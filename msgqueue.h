@@ -30,7 +30,7 @@ typedef struct msglist {
     size_t count;
 } msglist;
 
-typedef enum { QUEUE_IN, QUEUE_OUT } msg_queue_id;
+typedef enum { QUEUE_IN, QUEUE_OUT, QUEUE_UI } msg_queue_id;
 
 // Add message to the end of the provided list. `msg` must be a null-terminated
 // string, and it will be copied into the appended list entry, so it's safe to
