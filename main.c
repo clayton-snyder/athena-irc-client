@@ -14,7 +14,7 @@
 
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID data);
-void print_addr_info(struct addrinfo* addr_info);
+void DEBUG_print_addr_info(struct addrinfo* addr_info);
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -54,15 +54,15 @@ int main(int argc, char* argv[]) {
     WSADATA wsa_data;
     int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     if (result != 0) {
-        printf("WSAStartup failed, returned: %d\n", result);
+        log_fmt(LOGLEVEL_ERROR, "[main] WSAStartup failed: %d", result);
         return 23;
     }
 
     WORD ver_hi = HIBYTE(wsa_data.wVersion);
     WORD ver_lo = LOBYTE(wsa_data.wVersion);
-    printf("WSA Version: %u.%u\n", ver_hi, ver_lo);
+    log_fmt(LOGLEVEL_INFO, "[main] WSA Version: %u.%u", ver_hi, ver_lo);
     if (ver_hi != 2 || ver_lo != 2) {
-        printf("Expected version 2.2. Aborting.\n");
+        log(LOGLEVEL_ERROR, "[main] Expected version 2.2. Aborting.");
         WSACleanup();
         return 23;
     }
@@ -75,16 +75,17 @@ int main(int argc, char* argv[]) {
 
     result = getaddrinfo(argv[1], argv[2], &hints, &addr_info);
     if (result != 0) {
-        printf("getaddrinfo failed, returned: %d\n", result);
+        log_fmt(LOGLEVEL_ERROR, "[main] getaddrinfo failed: %d", result);
         WSACleanup();
         return 23;
     }
-    print_addr_info(addr_info);
+    DEBUG_print_addr_info(addr_info);
 
     SOCKET sock = socket(addr_info->ai_family, addr_info->ai_socktype,
             addr_info->ai_protocol);
     if (sock == INVALID_SOCKET) {
-        printf("socket() failed: %lu\n", WSAGetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[main] socket() failed: %lu",
+                WSAGetLastError());
         freeaddrinfo(addr_info);
         WSACleanup();
         return 23;
@@ -92,7 +93,8 @@ int main(int argc, char* argv[]) {
 
     result = connect(sock, addr_info->ai_addr, (int)addr_info->ai_addrlen);    
     if (result == SOCKET_ERROR) {
-        printf("connect() failed: %lu\n", WSAGetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[main] connect() failed: %lu",
+                WSAGetLastError());
         // TODO: Try every addr in the linked list (addrinfo.ai_next) 
         closesocket(sock);
         sock = INVALID_SOCKET;
@@ -103,12 +105,13 @@ int main(int argc, char* argv[]) {
     freeaddrinfo(addr_info);
 
     if (sock == INVALID_SOCKET) {
-        printf("Unable to connect to %s:%s", argv[1], argv[2]);
+        log_fmt(LOGLEVEL_ERROR, "[main] Unable to connect to %s:%s",
+                argv[1], argv[2]);
         WSACleanup();
         return 23;
     }
 
-    printf("Connected, apparently.\n");
+    log(LOGLEVEL_INFO, "Connected, apparently.\n");
 
     const char *send_buff[] = {
         "NICK code\r\n",
@@ -120,13 +123,13 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
         result = send(sock, send_buff[i], (int)strlen(send_buff[i]), 0);
         if (result == SOCKET_ERROR) {
-            // TODO: debug log
-            printf("[main] init send() failed: %lu\n", WSAGetLastError());
+            log_fmt(LOGLEVEL_ERROR, "[main] init send() failed: %lu",
+                    WSAGetLastError());
             closesocket(sock);
             WSACleanup();
             return 23;
         }
-        printf("Sent: %s\n", send_buff[i]);
+        log_fmt(LOGLEVEL_DEV, "[main] Sent: %s", send_buff[i]);
     }
 
     DWORD recv_thread_id = -1, ui_thread_id = -1;
@@ -141,7 +144,8 @@ int main(int argc, char* argv[]) {
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
-            printf("[main] MSG_IN: %s\n", curr_msgnode->msg);
+//            printf("[main] SERVER SAYS: \"%s\"\n", curr_msgnode->msg);
+            log_fmt(LOGLEVEL_SPAM, "[main] SERVER SAYS: \"%s\"", curr_msgnode->msg);
             curr_msgnode = curr_msgnode->next;
         }
 
@@ -151,7 +155,7 @@ int main(int argc, char* argv[]) {
         while (curr_msgnode != NULL) {
             char* msg = curr_msgnode->msg;
             if (strcmp(msg, "BYE") == 0) {
-                printf("[main] received BYE command. BYE!\n");
+                log(LOGLEVEL_INFO, "[main] received BYE command. BYE!");
                 bye = true;
                 break;
             }
@@ -166,8 +170,8 @@ int main(int argc, char* argv[]) {
 
             result = send(sock, send_buff, msg_len, 0);
             if (result == SOCKET_ERROR) {
-                // TODO: debug log
-                printf("[main] UI send() failed: %lu\n", WSAGetLastError());
+                log_fmt(LOGLEVEL_ERROR, "[main] UI send() failed: %lu",
+                        WSAGetLastError());
                 closesocket(sock);
                 WSACleanup();
                 return 23;
@@ -191,16 +195,15 @@ DWORD WINAPI thread_main_ui(LPVOID data) {
     while (!bye) {
         char* str = gets_s(buff, INPUT_BUFF_LEN);
         if (str == NULL) {
-            // TODO: debug log
-            printf("[thread_main_ui] gets_s returned NULL.\n");
+            log(LOGLEVEL_ERROR, "[thread_main_ui] gets_s returned NULL.\n");
             // TODO: communicate failure
-            return 23;
+            exit(23);
         }
         if (strcmp(str, "BYE") == 0) {
-            printf("[thread_main_ui] received BYE command. BYE!\n");
+            log(LOGLEVEL_INFO, "[thread_main_ui] received BYE command. BYE!\n");
             bye = true;
         }
-        printf("[thread_main_ui] submitting: \"%s\"\n", str);
+        log_fmt(LOGLEVEL_DEV, "[thread_main_ui] submitting: \"%s\"", str);
 
         msglist_pushback(&msgs, str);
         msglist_submit(QUEUE_UI, &msgs);
@@ -223,7 +226,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
     {
         i_buff_offset += bytes_received;
         if (i_buff_offset >= RECV_BUFF_LEN) {
-            printf("[thread_main_recv] FATAL: Ran out of buffer.\n");
+            log(LOGLEVEL_ERROR, "[thread_main_recv] FATAL: Ran out of buffer.");
             // TODO: communiate failure and clean up
             exit(23);
         }
@@ -236,11 +239,10 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
                           recv_buff[i_last_delim] == '\n';
         }
 
-        // TODO: debug log
-        printf("[thread_main_recv] delim_found=%d, i_last_delim=%d(%d), "
-                "bytes_received=%d, i_buff_offset=%d\n", delim_found,
-                i_last_delim, recv_buff[i_last_delim], bytes_received,
-                i_buff_offset);
+        log_fmt(LOGLEVEL_DEV, "[thread_main_recv] delim_found=%d, "
+                "i_last_delim=%d(%d), bytes_received=%d, i_buff_offset=%d",
+                delim_found, i_last_delim, recv_buff[i_last_delim],
+                bytes_received, i_buff_offset);
 
         if (!delim_found)
             continue;
@@ -257,17 +259,14 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
             recv_buff[i + 1] = '\0';
             msglist_pushback(&msgs, &recv_buff[msg_start]);
 
-            // TODO: debug log
-            //printf("[thread_main_recv] new msg: %s\n", &recv_buff[msg_start]);
-
             // Skip the two null terminators we wrote.
             msg_start = i++ + 2;
         }
 
         if (msgs.count > 0) {
             msglist_submit(QUEUE_IN, &msgs);
-            // TODO: Debug log
-            printf("[thread_main_recv] Submitted %d msgs to IN.\n", msgs.count);
+            log_fmt(LOGLEVEL_DEV, "[thread_main_recv] Submitted %d msgs to IN.",
+                    msgs.count);
         }
 
         assert(i_buff_offset < RECV_BUFF_LEN);
@@ -281,19 +280,20 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
     }
 
     if (bytes_received < 0) {
-        printf("recv() failed: %lu\n", WSAGetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[thread_main_recv] recv() failed: %lu",
+                WSAGetLastError());
         // TODO: Communicate failure and cleanup
         exit(23);
     }
 
-    // TODO: debug log
-    printf("[thread_main_recv] Server disconnected, apparently.\n");
+    log(LOGLEVEL_WARNING, "[thread_main_recv] Server disconnected, apparently");
 
     return 0;
 }
 
-void print_addr_info(struct addrinfo* addr_info) {
-    printf("family:%d\nsocktype:%d\nprotocol:%d\naddrlen:%zu\ncanonname:%s\n",
+void DEBUG_print_addr_info(struct addrinfo* addr_info) {
+    log_fmt(LOGLEVEL_DEV,
+            "family:%d\nsocktype:%d\nprotocol:%d\naddrlen:%zu\ncanonname:%s",
             addr_info->ai_family,
             addr_info->ai_socktype,
             addr_info->ai_protocol,
@@ -304,14 +304,16 @@ void print_addr_info(struct addrinfo* addr_info) {
         struct sockaddr_in *v4 = (struct sockaddr_in *) addr_info->ai_addr;
         char buff[16];
         inet_ntop(AF_INET, &v4->sin_addr, (char*)&buff, sizeof(buff));
-        printf("(IPv4) %s\n", buff);
+        log_fmt(LOGLEVEL_DEV, "[print_addr_info] (IPv4) %s", buff);
     } else if (addr_info->ai_family == AF_INET6) {
         struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) addr_info->ai_addr;
         char buff[46];
         inet_ntop(AF_INET6, &v6->sin6_addr, (char*)&buff, sizeof(buff));
-        printf("(IPv6) %s\n", buff);
+        log_fmt(LOGLEVEL_DEV, "[print_addr_info] (IPv6) %s", buff);
     } else {
-        printf("Unexpected ai_family value: %d\n", addr_info->ai_family);
+        log_fmt(LOGLEVEL_WARNING,
+                "[print_addr_info] Unexpected ai_family value: %d",
+                addr_info->ai_family);
     }
 }
 

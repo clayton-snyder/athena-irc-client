@@ -41,7 +41,7 @@ void msglist_pushback(msglist *list, char* msg) {
     char *msgcpy = (char*)malloc(strlen(msg) + 1);
     if (node == NULL || msgcpy == NULL) {
         // TODO: communicate fatal error
-        printf("[msglist_pushback()] FATAL: out of memory.\n");
+        log(LOGLEVEL_ERROR, "[msglist_pushback()] FATAL: out of memory.");
         exit(23);
     }
 
@@ -89,7 +89,8 @@ msglist msg_queue_takeall(msg_queue_id id) {
     HANDLE *p_mtx;
 
     if (!select_queue(id, &p_queue, &p_mtx)) {
-        printf("[mst_queue_takeall(%d)] No queue found for ID.\n", (int)id);
+        log_fmt(LOGLEVEL_ERROR,
+                "[msg_queue_takeall(%d)] No queue found for ID.", (int)id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -97,8 +98,8 @@ msglist msg_queue_takeall(msg_queue_id id) {
 
     DWORD result = WaitForSingleObject(*p_mtx, INFINITE);
     if (result != WAIT_OBJECT_0) {
-        printf("[msg_queue_takeall(%d)] WaitForSingleObject() failed: "
-                "[%lu] %lu\n", (int)id, result, GetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[msg_queue_takeall(%d)] WaitForSingleObject() "
+                "failed: [%lu] %lu", (int)id, result, GetLastError());
         // Right now, any result other than a successful lock is unexpected.
         // TODO: communicate failure to let main() cleanup
         exit(23);
@@ -118,7 +119,8 @@ msglist msg_queue_takeall(msg_queue_id id) {
 
     if (!ReleaseMutex(*p_mtx)) {
         // TODO: See if not casting this enum to (int) triggers a warning.
-        printf("[msg_queue_takeall(%d)] ReleaseMutex() failed.\n", id);
+        log_fmt(LOGLEVEL_ERROR,
+                "[msg_queue_takeall(%d)] ReleaseMutex() failed.", id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -134,7 +136,8 @@ void msglist_submit(msg_queue_id id, msglist *list) {
     HANDLE *p_mtx;
 
     if (!select_queue(id, &p_queue, &p_mtx)) {
-        printf("[msglist_submit(%d)] No queue found for ID.\n", (int)id);
+        log_fmt(LOGLEVEL_ERROR, "[msglist_submit(%d)] No queue found for ID.",
+                (int)id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -142,8 +145,8 @@ void msglist_submit(msg_queue_id id, msglist *list) {
 
     DWORD result = WaitForSingleObject(*p_mtx, INFINITE);
     if (result != WAIT_OBJECT_0) {
-        printf("[msglist_submit(%d)] WaitForSingleObject() failed: "
-                "[%lu] %lu\n", (int)id, result, GetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[msglist_submit(%d)] WaitForSingleObject() "
+                "failed: [%lu] %lu", (int)id, result, GetLastError());
         // Right now, any result other than a successful lock is unexpected.
         // TODO: communicate failure to let main() cleanup
         exit(23);
@@ -163,7 +166,8 @@ void msglist_submit(msg_queue_id id, msglist *list) {
 
     if (!ReleaseMutex(*p_mtx)) {
         // TODO: See if not casting this enum to (int) triggers a warning.
-        printf("[msglist_submit(%d)] ReleaseMutex() failed.\n", id);
+        log_fmt(LOGLEVEL_ERROR,
+                "[msglist_submit(%d)] ReleaseMutex() failed.", id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -186,7 +190,7 @@ static bool select_queue(msg_queue_id id, msglist **p_queue, HANDLE **p_mtx) {
     default:
         *p_queue = NULL;
         *p_mtx = NULL;
-        printf("[select_queue(%d)] Invalid msg_queue_id.\n", id);
+        log_fmt(LOGLEVEL_ERROR, "[select_queue(%d)] Invalid msg_queue_id.", id);
         return false;
     }
 }
@@ -215,7 +219,8 @@ void DEBUG_print_queue(msg_queue_id id) {
     HANDLE *p_mtx;
 
     if (!select_queue(id, &p_queue, &p_mtx)) {
-        printf("[DEBUG_print_queue(%d)] No queue found for ID.\n", (int)id);
+        log_fmt(LOGLEVEL_ERROR,
+                "[DEBUG_print_queue(%d)] No queue found for ID.", (int)id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -223,8 +228,8 @@ void DEBUG_print_queue(msg_queue_id id) {
 
     DWORD result = WaitForSingleObject(*p_mtx, INFINITE);
     if (result != WAIT_OBJECT_0) {
-        printf("[DEBUG_print_queue(%d)] WaitForSingleObject() failed: "
-                "[%lu] %lu\n", (int)id, result, GetLastError());
+        log_fmt(LOGLEVEL_ERROR, "[DEBUG_print_queue(%d)] WaitForSingleObject() "
+                "failed: [%lu] %lu", (int)id, result, GetLastError());
         // Right now, any result other than a successful lock is unexpected.
         // TODO: communicate failure to let main() cleanup
         exit(23);
@@ -234,7 +239,8 @@ void DEBUG_print_queue(msg_queue_id id) {
 
     if (!ReleaseMutex(*p_mtx)) {
         // TODO: See if not casting this enum to (int) triggers a warning.
-        printf("[DEBUG_print_queue(%d)] ReleaseMutex() failed.\n", id);
+        log_fmt(LOGLEVEL_ERROR,
+                "[DEBUG_print_queue(%d)] ReleaseMutex() failed.", id);
         // TODO: communicate failure to let main() cleanup
         exit(23);
     }
@@ -243,30 +249,30 @@ void DEBUG_print_queue(msg_queue_id id) {
 
 void DEBUG_print_msglist(msglist *list) {
     if (list == NULL) {
-        printf("{NULL msglist}\n");
+        log(LOGLEVEL_DEV, "{NULL msglist}");
         return;
     } else if (list->head == NULL) {
-        printf("{Empty msglist}");
+        log(LOGLEVEL_DEV, "{Empty msglist}");
         return;
     }
 
     if (list->tail == NULL) 
-        printf("WARNING: List poorly formed (tail is NULL, head is not).\n");
+        log(LOGLEVEL_WARNING, "List poorly formed (tail is NULL, head isn't).");
     else if (list->tail->next != NULL)
-        printf("WARNING: List poorly formed (tail->next is not NULL).\n");
+        log(LOGLEVEL_WARNING, "List poorly formed (tail->next is not NULL).");
     
 
-    printf("Count: %zu\n", list->count);
-    if (list->head->msg == NULL) printf("HEAD->{msg=NULL}\n");
-    else printf("HEAD->{msg=\"%s\"}\n", list->head->msg);
+    log_fmt(LOGLEVEL_DEV, "Count: %zu\n", list->count);
+    if (list->head->msg == NULL) log(LOGLEVEL_DEV, "HEAD->{msg=NULL}");
+    else log_fmt(LOGLEVEL_DEV, "HEAD->{msg=\"%s\"}", list->head->msg);
 
-    if (list->tail->msg == NULL) printf("TAIL->{msg=NULL}\n");
-    else printf("TAIL->{msg=\"%s\"}\n", list->tail->msg);
+    if (list->tail->msg == NULL) log(LOGLEVEL_DEV, "TAIL->{msg=NULL}");
+    else log_fmt(LOGLEVEL_DEV, "TAIL->{msg=\"%s\"}", list->tail->msg);
 
     for (struct msgnode *curr = list->head; curr != NULL; curr = curr->next) {
-        if (curr->msg == NULL) printf("{msg=NULL}->");
-        else printf("{msg=\"%s\"}->", curr->msg);
+        if (curr->msg == NULL) log(LOGLEVEL_DEV, "{msg=NULL}->");
+        else log_fmt(LOGLEVEL_DEV, "{msg=\"%s\"}->", curr->msg);
     }
-    printf("NULL\n");
+    log(LOGLEVEL_DEV, "NULL");
 }
 

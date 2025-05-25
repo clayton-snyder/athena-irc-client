@@ -10,7 +10,9 @@ typedef enum {
     TEXTCOLOR_BLACK = 0,
     TEXTCOLOR_RED = 1,
     TEXTCOLOR_YELLOW = 2,
-    TEXTCOLOR_GRAY = 3
+    TEXTCOLOR_GRAY = 3,
+    TEXTCOLOR_LIGHTGRAY = 4,
+    TEXTCOLOR_MAGENTA = 5
 } textcolor;
 
 // ANSI color codes
@@ -18,7 +20,9 @@ static const char* color_codes[] = {
     [TEXTCOLOR_BLACK] = "30",
     [TEXTCOLOR_RED] = "31",
     [TEXTCOLOR_YELLOW] = "33",
-    [TEXTCOLOR_GRAY] = "38;5;243"
+    [TEXTCOLOR_GRAY] = "38;5;242",
+    [TEXTCOLOR_LIGHTGRAY] = "38;5;249",
+    [TEXTCOLOR_MAGENTA] = "35"
 };
 
 // Every set_color() call should be matched by a reset_color() when the log 
@@ -39,6 +43,7 @@ void log(loglevel severity, char *msg) {
     if (logger_level < severity) return;
     prepare_console(severity);
     printf(msg);
+    reset_color();
     printf("\n");
 }
 
@@ -68,7 +73,7 @@ static void prepare_console(loglevel severity) {
     switch (severity) {
     case LOGLEVEL_ERROR:
         set_color(TEXTCOLOR_RED, true);
-        printf("<ERROR> ");
+        printf("<ERROR>   ");
         set_color(TEXTCOLOR_RED, false);
         break;
     case LOGLEVEL_WARNING:
@@ -77,16 +82,19 @@ static void prepare_console(loglevel severity) {
         set_color(TEXTCOLOR_YELLOW, false);
         break;
     case LOGLEVEL_INFO:
-        printf("<INFO> ");
+        printf("<INFO>    ");
         break;
     case LOGLEVEL_DEV:
-        printf("<DEV> ");
+        set_color(TEXTCOLOR_LIGHTGRAY, false);
+        printf("<DEV>     ");
         break;
     case LOGLEVEL_SPAM:
         set_color(TEXTCOLOR_GRAY, false);
-        printf("<spam> ");
+        printf("<spam>    ");
         break;
     default:
+        set_color(TEXTCOLOR_MAGENTA, true);
         printf("<UNKNOWN LOGLEVEL> ");
+        set_color(TEXTCOLOR_MAGENTA, false);
     }
 }
