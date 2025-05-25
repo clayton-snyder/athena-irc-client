@@ -16,6 +16,7 @@
 // the whole list to be processed at once then freed. When receiving a list,
 // i.e., by taking a queue with msg_queue_takeall(), prefer to loop the entire
 // thing, processing each message accordingly, then pass it to msglist_free().
+#pragma once
 
 #include <stddef.h>
 

@@ -1,3 +1,4 @@
+#include "log.h"
 #include "msgqueue.h"
 
 #include <assert.h>

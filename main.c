@@ -1,6 +1,8 @@
+#include "log.h"
 #include "msgqueue.h"
 
 #include <assert.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,12 +17,35 @@ DWORD WINAPI thread_main_ui(LPVOID data);
 void print_addr_info(struct addrinfo* addr_info);
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        printf("Usage: client <hostname> <port>\n");
+    if (argc < 3) {
+        log(LOGLEVEL_ERROR,
+                "Usage: client <hostname> <port> [loglevel=\"warning\"]");
         return 23;
     }
 
-    printf("Ages ago, life was born in the primitive sea.\n");
+    if (argc == 4) {
+        if (strcmp(argv[3], "spam") == 0) {
+            set_logger_level(LOGLEVEL_SPAM);
+        } else if (strcmp(argv[3], "dev") == 0) {
+            set_logger_level(LOGLEVEL_DEV);
+        } else if (strcmp(argv[3], "info") == 0) {
+            set_logger_level(LOGLEVEL_INFO);
+        } else if (strcmp(argv[3], "warning") == 0) {
+            set_logger_level(LOGLEVEL_WARNING);
+        } else if (strcmp(argv[3], "error") == 0) {
+            set_logger_level(LOGLEVEL_ERROR);
+        } else {
+            set_logger_level(LOGLEVEL_WARNING);
+            log_fmt(LOGLEVEL_WARNING, "Unknown loglevel '%s'. Options are "
+                    "'spam', 'dev', info', 'warning', and 'error'. Defaulting "
+                    "to 'warning'.", argv[3]);
+        }
+    } else {
+        set_logger_level(LOGLEVEL_WARNING);
+        log_fmt(LOGLEVEL_WARNING, "No loglevel specified; set to 'warning'.");
+    }
+
+    log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
     
     // TODO: placement?
     init_msg_queues();
@@ -112,6 +137,7 @@ int main(int argc, char* argv[]) {
 
     bool bye = false;
     while (!bye) {
+        // INCOMING msgs
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
@@ -288,3 +314,4 @@ void print_addr_info(struct addrinfo* addr_info) {
         printf("Unexpected ai_family value: %d\n", addr_info->ai_family);
     }
 }
+
