@@ -1,5 +1,7 @@
 #include "log.h"
 #include "msgqueue.h"
+#include "stringutils.h"
+#include "terminalutils.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -10,11 +12,36 @@
 #include <ws2tcpip.h>
 
 #define RECV_BUFF_LEN 1024 * 8
-#define INPUT_BUFF_LEN 512 // max IRC message length. change this later
+
+/* BUF ALLOCATION GUIDE:
+ * buffer to hold snprintf result: char cmd_buf[MAX_CMD_LEN + 1]
+ * buffer to send to IRC server: char cmd_buf[IRC_MSG_BUF_LEN]
+ */
+
+// Max IRC message allowed is 512 including the CRLF delimiter. This macro value
+// should be used when validating strlen() of messages prior to preparing them
+// with CRLF delimiter. Use this macro value + 1 when allocating buffers to 
+// prepare messages to pass to send_as_irc().
+#define MAX_CMD_LEN 510
+
+// Use this to allocate buffers that will be sent to the IRC server. The two 
+// extra bytes are reserved for CR and LF.
+#define IRC_MSG_BUF_LEN (MAX_CMD_LEN + 2)
+
+// A longer input buffer helps because we can tell the user exactly how much
+// they need to reduce their message by as long as we can read it all.
+#define INPUT_BUFF_LEN 1024 * 4
 
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID data);
+void handlecmd_channel(char *cmd, SOCKET sock);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
+
+// TODO: rename, and do we need the bool return?
+static bool try_send_as_irc(SOCKET sock, const char* fmt, ...);
+static int send_as_irc(SOCKET sock, const char* msg);
+// TODO: should this return bool?
+bool handle_local_command(char *cmd_str, SOCKET sock);
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -148,36 +175,40 @@ int main(int argc, char* argv[]) {
             log_fmt(LOGLEVEL_SPAM, "[main] SERVER SAYS: \"%s\"", curr_msgnode->msg);
             curr_msgnode = curr_msgnode->next;
         }
+        msglist_free(&msgs_in);
 
         // UI msgs
         msglist msgs_ui = msg_queue_takeall(QUEUE_UI);
         curr_msgnode = msgs_ui.head;
         while (curr_msgnode != NULL) {
             char* msg = curr_msgnode->msg;
-            if (strcmp(msg, "BYE") == 0) {
-                log(LOGLEVEL_INFO, "[main] received BYE command. BYE!");
-                bye = true;
-                break;
-            }
-
-            // We need to replace \0 with \r\n
-            size_t msg_len = strlen(msg) + 2;
-            assert(msg_len < INPUT_BUFF_LEN + 1);
-            char send_buff[INPUT_BUFF_LEN + 1];
-            strcpy(send_buff, msg);
-            send_buff[msg_len - 2] = '\r';
-            send_buff[msg_len - 1] = '\n';
-
-            result = send(sock, send_buff, msg_len, 0);
-            if (result == SOCKET_ERROR) {
-                log_fmt(LOGLEVEL_ERROR, "[main] UI send() failed: %lu",
-                        WSAGetLastError());
-                closesocket(sock);
-                WSACleanup();
-                return 23;
-            }
+            assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
+
+            // TODO: Check type of command. Options: 
+            // * It's a local command prefix. Try to process it
+            // * It's a "send to server" prefix. Validate minimally, remove
+            //      prefix, send to OQ.
+            // * No prefix. Validate user is in a channel, and len, send to OQ. 
+            // NOTE: Things going to OQ should be IRC messages!!
+
+            // TODO: refactor this garb
+            if (msg[0] == '!') {
+                // Local command
+                bye = handle_local_command(msg + 1, sock);
+                if (bye) break;
+            }
+            else if (msg[0] == '`') {
+                try_send_as_irc(sock, (msg + 1));
+            } else {
+                // TODO: Validate if they're in a channel
+                // TODO: move this to a global string
+                char* fmt = "PRIVMSG %s :%s";
+                // TODO: insert actual channel param.
+                try_send_as_irc(sock, fmt, "#codetest", msg);
+            }
         }
+        msglist_free(&msgs_ui);
         // Out msgs
     }
 
@@ -187,25 +218,167 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
+static int send_as_irc(SOCKET sock, const char* msg) {
+    // We need to replace \0 with \r\n
+    size_t msg_len = strlen(msg) + 2;
+    assert(msg_len <= IRC_MSG_BUF_LEN);
+    char send_buff[IRC_MSG_BUF_LEN];
+    strcpy(send_buff, msg);
+    send_buff[msg_len - 2] = '\r';
+    send_buff[msg_len - 1] = '\n';
+
+    return send(sock, send_buff, msg_len, 0);
+}
+
+static bool try_send_as_irc(SOCKET sock, const char* fmt, ...) {
+    // TODO: validate if this works with empty va_list. I think it just has to
+    // match the number of formatters in fmt...
+    va_list fmt_args;
+    va_start(fmt_args, fmt);
+    // vsnprintf writes up to bufsz - 1 characters, plus the null term. Ergo
+    // MAX_CMD_LEN + 1 gives us room for CRLF if we overwrite the null term.
+    char irc_cmd[MAX_CMD_LEN + 1];
+    int full_len = vsnprintf(irc_cmd, sizeof(irc_cmd), fmt, fmt_args);
+    va_end(fmt_args);
+
+    // vsnprintf returns the would-be expanded string length (without the null
+    // term), so we can use it to check for truncation.
+    if (full_len + 2 > IRC_MSG_BUF_LEN) {
+        log_fmt(LOGLEVEL_WARNING, "[main] Expanded message too long (%d); not "
+                "sent: \'%s\'(truncated)", full_len, irc_cmd);
+        //TODO: OUTPUT
+        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+        termutils_set_bold(true);
+        printf("Your message is too long. Reduce it by %d characters.\n",
+                full_len + 2 - IRC_MSG_BUF_LEN);
+        termutils_reset_all();
+        return false;
+    }
+
+    int result = send_as_irc(sock, irc_cmd);
+    if (result == SOCKET_ERROR) {
+        // TODO: communicate failure
+        log_fmt(LOGLEVEL_ERROR, "[try_send_as_irc] send() failed: %lu",
+                WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        exit(23);
+    }
+    return true;
+}
+
+// Returns true if program should exit.
+bool handle_local_command(char *cmd, SOCKET sock) {
+    assert(cmd != NULL);
+    assert(sock != INVALID_SOCKET);
+    log_fmt(LOGLEVEL_DEV, "[handle_local_command] Processing '%s'", cmd);
+    if (strcmp(cmd, "BYE") == 0) return true;
+    if (strutils_startswith(cmd, "channel ") || strcmp(cmd, "channel") == 0)
+        handlecmd_channel(cmd, sock);
+    return false;
+}
+
+void handlecmd_channel(char *cmd, SOCKET sock) {
+    assert(cmd != NULL);
+    assert(sock != INVALID_SOCKET);
+
+    char* tk_cmd = strtok(cmd, " ");
+    assert(strcmp(tk_cmd, "channel") == 0);
+    char* tk_action = strtok(NULL, " ");
+    if (tk_action == NULL || strcmp(tk_action, "help") == 0) {
+        // TODO: output
+        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+        // TODO: HELP string
+        puts("Usage: !channel <action> [args...]");
+        puts("Avaiable actions for !channel:\n"
+                "* list [names]\n"
+                "\tDisplay info about the listed channels."
+                "\n\t[names] is a comma-separated list (with NO spaces)."
+                "\n\tIf [names] is omitted, lists all channels.\n"
+                "* join <name>\n"
+                "\tJoin or create the specified channel.\n"
+                "* switch <name>\n"
+                "\tSwitch the active (displayed) channel to the one specified."
+                "\n\tYou must have previously joined the channel.\n"
+                "* part <name>\n"
+                "\tLeave the specified channel.\n");
+    }
+    else if (strcmp(tk_action, "list") == 0) {
+        char* tk_names = strtok(NULL, " ");
+        if (tk_names != NULL && strtok(NULL, " ") != NULL) {
+            // TODO: output
+            termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+            termutils_set_bold(true);
+            puts("Too many arguments for 'list' command. [names] should be "
+                    "a comma-separated list (with no spaces) of the channel"
+                    " names you wish to display info about.");
+            termutils_reset_all();
+        }
+        try_send_as_irc(sock, "LIST %s", tk_names ? tk_names : "");
+    }
+    // TODO: other !channel actions
+    log_fmt(LOGLEVEL_DEV, "Performed !channel %s", tk_action ? tk_action : "");
+}
+
+
 DWORD WINAPI thread_main_ui(LPVOID data) {
-    char buff[INPUT_BUFF_LEN];
+    // TODO: This function should be refactored to use a string reading function
+    // that mallocs to tolerate any user input size so we can always tell the
+    // user how much smaller their message needs to be and to avoid an
+    // unnecessary string copy. `getline()` does this, but Windows doesn't have
+    // that, so I need to write it myself. For now we use a really huge buffer
+    // and admonish the user if they exceed it.
     msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
+    char ui_buff[INPUT_BUFF_LEN];
 
     bool bye = false;
     while (!bye) {
-        char* str = gets_s(buff, INPUT_BUFF_LEN);
+        char *str = fgets(ui_buff, sizeof(ui_buff), stdin);
+        size_t str_len = strlen(str);
+        log_fmt(LOGLEVEL_DEV, "[thread_main_ui] fgets(): str_len=%d", str_len);
+        
         if (str == NULL) {
-            log(LOGLEVEL_ERROR, "[thread_main_ui] gets_s returned NULL.\n");
+            log_fmt(LOGLEVEL_ERROR, "[thread_main_ui] fgets() gave NULL str. "
+                    "ferror(stdin): %d", ferror(stdin));
             // TODO: communicate failure
             exit(23);
         }
+
+        // TODO: certainly this can be refactored.
+        if (ui_buff[str_len - 1] != '\n') {
+            if (str_len < INPUT_BUFF_LEN - 1) {
+                log_fmt(LOGLEVEL_ERROR,
+                        "[thread_main_ui] End of string is not \\n, but buff "
+                        "was not filled. Because input is stdin, this is "
+                        "unexpected. str_len=%d, INPUT_BUFF_LEN=%d, "
+                        "sizeof(ui_buff)=%d, str='%s'", str_len, INPUT_BUFF_LEN,
+                        sizeof(ui_buff), str);
+                // TODO: communicate failure
+                exit(23);
+            }
+            //TODO:output
+            termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+            termutils_set_bold(true);
+            printf("You have *far* exceeded the allowable message length. "
+                    "Enter a message shorter than %d characters and I can tell "
+                    "you specifically how much smaller your message must be.\n",
+                    sizeof(ui_buff));
+            termutils_reset_all();
+        }
+
+        // fgets() should include the delimiting \n in the buffer...
+        assert(ui_buff[str_len - 1] == '\n');
+        ui_buff[--str_len] = '\0'; // ... and we don't want it.
+
         if (strcmp(str, "BYE") == 0) {
             log(LOGLEVEL_INFO, "[thread_main_ui] received BYE command. BYE!\n");
             bye = true;
+            // TODO: output
         }
         log_fmt(LOGLEVEL_DEV, "[thread_main_ui] submitting: \"%s\"", str);
 
-        msglist_pushback(&msgs, str);
+        // TODO: this can change to msglist_pushback_take when we impl getline()
+        msglist_pushback_copy(&msgs, str);
         msglist_submit(QUEUE_UI, &msgs);
         msgs.head = msgs.tail = NULL;
         msgs.count = 0;
@@ -257,7 +430,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
             // msglist msgs should be null terminated.
             recv_buff[i] = '\0';
             recv_buff[i + 1] = '\0';
-            msglist_pushback(&msgs, &recv_buff[msg_start]);
+            msglist_pushback_copy(&msgs, &recv_buff[msg_start]);
 
             // Skip the two null terminators we wrote.
             msg_start = i++ + 2;
