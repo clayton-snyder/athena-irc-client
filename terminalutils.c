@@ -184,3 +184,11 @@ void termutils_reset_bg_color() {
 void termutils_reset_all() {
     fputs("\033[0m", stdout);
 }
+
+void termutils_set_cursor_color(const char* color_str) {
+    printf("\x1b]12;%s\x07", color_str);
+}
+
+void termutils_reset_cursor_color() {
+    printf("\x1b]112\x07");
+}

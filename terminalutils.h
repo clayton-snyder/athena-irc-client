@@ -71,3 +71,11 @@ void termutils_reset_bg_color();
 
 // Resets all colors and formatting options to their defaults.
 void termutils_reset_all();
+
+// color_str can be a hex string or a color name. 
+void termutils_set_cursor_color(const char* color_str);
+
+// I have noticed this not working in some terminals (e.g., WezTerm). OSC 112
+// should reset the cursor color to default, but I'm not sure how default gets
+// set in the first place. It works on Windows Terminal.
+void termutils_reset_cursor_color();
