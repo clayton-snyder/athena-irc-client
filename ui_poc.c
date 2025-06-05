@@ -211,13 +211,15 @@ size_t fill_buffer(
         if (rows_skipped < scroll) {
             if (rows_skipped + msg_rows <= scroll) {
                 rows_skipped += msg_rows;
-                curr_node = curr_node->prev;
-                continue;
+            } else {
+                size_t lines_to_take = msg_rows - (scroll - rows_skipped);
+                msg_offset_end = term_cols * lines_to_take;
+                rows_skipped += msg_rows - lines_to_take;
+                assert(rows_skipped == scroll);
+                rows_used += lines_to_take;
             }
-            size_t lines_to_take = msg_rows - (scroll - rows_skipped);
-            msg_offset_end = term_cols * lines_to_take;
-            rows_skipped += msg_rows - lines_to_take;
-            assert(rows_skipped == scroll);
+            curr_node = curr_node->prev;
+            continue;
         }
 
         if (rows_used + msg_rows <= buf_rows) {
@@ -269,14 +271,14 @@ size_t fill_buffer(
         size_t msg_rows = num_lines(msg, term_cols);
         i_msg = 0;
         if (rows_filled_in_buf + msg_rows > buf_rows) {
-            // Use the end offset
+            // Write only up to the offset (exclusive)
             while (i_msg < msg_offset_end && msg[i_msg] != '\0') 
                 if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
 
             buf[i_buf++] = '\0'; // This is the last message
 
             rows_filled_in_buf += 
-                i_msg / term_cols + (i_msg % term_cols == 0 ? 0 : 1);
+               (i_msg - 1) / term_cols + ((i_msg - 1) % term_cols == 0 ? 0 : 1);
             assert(rows_filled_in_buf == buf_rows);
             continue;
         }
