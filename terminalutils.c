@@ -100,11 +100,10 @@ void termutils_set_text_color_256(int color_code) {
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
 #endif
-    if (color_code < 0 || color_code > 255) return;
     printf("\033[38;5;%dm", color_code);
 }
 
-void termutils_reset_text_color() {
+void termutils_reset_text_color(void) {
     fputs("\033[39m", stdout);
 }
 
@@ -173,15 +172,14 @@ void termutils_set_bg_color_256(int color_code) {
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
 #endif
-    if (color_code < 0 || color_code > 255) return;
     printf("\033[48;5;%dm", color_code);
 }
 
-void termutils_reset_bg_color() {
+void termutils_reset_bg_color(void) {
     fputs("\033[49m", stdout);
 }
 
-void termutils_reset_all() {
+void termutils_reset_all(void) {
     fputs("\033[0m", stdout);
 }
 
@@ -189,6 +187,6 @@ void termutils_set_cursor_color(const char* color_str) {
     printf("\x1b]12;%s\x07", color_str);
 }
 
-void termutils_reset_cursor_color() {
+void termutils_reset_cursor_color(void) {
     printf("\x1b]112\x07");
 }

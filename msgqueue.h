@@ -52,7 +52,7 @@ void msglist_pushback_take(msglist *list, char *msg);
 void msglist_pushback_copy(msglist *list, const char *msg);
 
 // Must be called prior to using any msg_queue-related functionality.
-void init_msg_queues();
+void init_msg_queues(void);
 
 // If there are no messages in the specified queue, `head` and `tail` of the
 // returned msglist will be null and `count` will be 0.

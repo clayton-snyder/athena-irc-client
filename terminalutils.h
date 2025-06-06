@@ -57,7 +57,7 @@ void termutils_set_text_color(termutils_color color);
 void termutils_set_text_color_256(int color_code);
 
 // Same as calling `set_text_color(TERMUTILS_COLOR_DEFAULT);`
-void termutils_reset_text_color();
+void termutils_reset_text_color(void);
 
 // Sets the background color using the 8-16 color set (some terminals may not
 // support the _BRIGHT versions of colors).
@@ -67,10 +67,10 @@ void termutils_set_bg_color(termutils_color color);
 void termutils_set_bg_color_256(int color_code);
 
 // Same as calling `set_bg_color(TERMUTILS_COLOR_DEFAULT);`
-void termutils_reset_bg_color();
+void termutils_reset_bg_color(void);
 
 // Resets all colors and formatting options to their defaults.
-void termutils_reset_all();
+void termutils_reset_all(void);
 
 // color_str can be a hex string or a color name. 
 void termutils_set_cursor_color(const char* color_str);
@@ -78,4 +78,4 @@ void termutils_set_cursor_color(const char* color_str);
 // I have noticed this not working in some terminals (e.g., WezTerm). OSC 112
 // should reset the cursor color to default, but I'm not sure how default gets
 // set in the first place. It works on Windows Terminal.
-void termutils_reset_cursor_color();
+void termutils_reset_cursor_color(void);

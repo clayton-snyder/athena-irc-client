@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <windows.h>
 
+#define ESC "\033"
+
 typedef struct chlognode {
     char *msg;
     struct chlognode *next;
@@ -16,17 +18,36 @@ typedef struct chloglist {
 
 DWORD WINAPI ui_main(LPVOID data);
 void push_chlog_msg(chloglist *list, char *msg);
-size_t fill_buffer(char *buf, size_t buflen, chloglist *list,
-                 size_t buf_rows, size_t term_cols, size_t scroll);
+
+// Finds the offset index into "msg" that would result in skipping "rows" number
+// of lines in a "cols" width buffer when printed onto the terminal screen 
+// (e.g., ignores ANSI escape sequences for color/format).
+// WARNING: Do not pass a string with non-printable chars (including newline) or
+// ANSI escape sequences other than color/format (i.e., beginning with 'ESC' and
+// ending with 'm').
+size_t calc_screen_offset(const char *msg, size_t rows, size_t cols);
+
+// Returns the number of on-screen columns the message will occupy (e.g., 
+// ignores ANSI escape sequences for color/format). 
+// WARNING: Do not pass a string with non-printable chars (including newline) or
+// ANSI escape sequences other than color/format (i.e., beginning with 'ESC' and
+// ending with 'm').
+size_t strlen_on_screen(const char *msg);
+
+// Returns the number of lines that "msg" will take up if printed to a buffer of
+// "cols" width.
+// WARNING: Does not account for newlines.
 int num_lines(char *msg, int cols);
 
+int fill_buffer(char *buf, size_t buflen, chloglist *list,
+                 int buf_rows, int term_cols, int scroll);
 
 chloglist g_chloglist = {0};
 char g_screenbuf[16 * 1024] = {0};
 bool g_scroll_at_top = true;
 
 
-int main() {
+int main(void) {
     // Use alternative screen buffer
     printf("\033[?1049h");
 
@@ -69,6 +90,8 @@ int main() {
 }
 
 DWORD WINAPI ui_main(LPVOID data) {
+    UNREFERENCED_PARAMETER(data);
+
     const char *prompt = "> ";
     char uibuf[50];
     char statbuf[1024]; // idk, there are some massive monitors
@@ -89,7 +112,7 @@ DWORD WINAPI ui_main(LPVOID data) {
 
     int term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     int term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-    size_t rows_filled_in_buf = 0;
+    int rows_filled_in_buf = 0;
     
     INPUT_RECORD irbuf[128];
     DWORD events = 0;
@@ -136,13 +159,13 @@ DWORD WINAPI ui_main(LPVOID data) {
         term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
         term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-        int stats_len = sprintf(statbuf,
+        int stats_len = sprintf_s(statbuf, sizeof(statbuf),
                 "%dx%d  scr:%d",
                 term_rows, term_cols, scroll);
 
-        size_t rows_statline = stats_len / term_cols + 1;
-        size_t rows_uiline = (strlen(prompt) + i_uibuf - 1) / term_cols + 1;
-        size_t rows_screenbuf = term_rows - (rows_statline + rows_uiline);
+        int rows_statline = stats_len / term_cols + 1;
+        int rows_uiline = (strlen(prompt) + i_uibuf - 1) / term_cols + 1;
+        int rows_screenbuf = term_rows - (rows_statline + rows_uiline);
 
         rows_filled_in_buf = fill_buffer(g_screenbuf, sizeof(g_screenbuf),
                 &g_chloglist, rows_screenbuf, term_cols, scroll);
@@ -171,10 +194,14 @@ DWORD WINAPI ui_main(LPVOID data) {
 
 void push_chlog_msg(chloglist *list, char *msg) {
     assert(list != NULL);
+
+
     chlognode *newnode = (chlognode *) malloc(sizeof(chlognode));
-    newnode->msg = (char *) malloc(strlen(msg) + 1);
+
+    rsize_t msg_size = strlen(msg) + 1;
+    newnode->msg = (char *) malloc(msg_size);
     newnode->prev = newnode->next = NULL;
-    strcpy(newnode->msg, msg);
+    strcpy_s(newnode->msg, msg_size, msg);
     if (list->head == NULL) {
         assert(list->tail == NULL);
         list->head = newnode;
@@ -187,13 +214,13 @@ void push_chlog_msg(chloglist *list, char *msg) {
     list->tail = newnode;
 }
 
-size_t fill_buffer(
+int fill_buffer(
         char *buf, 
         size_t buflen, 
         chloglist *list,
-        size_t buf_rows, 
-        size_t term_cols,
-        size_t scroll)
+        int buf_rows, 
+        int term_cols,
+        int scroll)
 {
     assert(list != NULL);
     if (list->head == NULL) {
@@ -201,18 +228,19 @@ size_t fill_buffer(
         return 0;
     }
 
-    size_t rows_skipped = 0, msg_offset_start = 0;
+    int rows_skipped = 0;
+    size_t msg_offset_start = 0;
     chlognode *curr_node = list->tail;
     while (rows_skipped < scroll && curr_node != NULL) {
         rows_skipped += num_lines(curr_node->msg, term_cols);
         curr_node = curr_node->prev;
     }
     // Account for the partial message we'll write at the end, if one fits.
-    size_t rows_used = rows_skipped - scroll;
+    int rows_used = rows_skipped - scroll;
     while (curr_node != NULL && rows_used < buf_rows) {
         assert(curr_node != NULL);
         assert(curr_node->msg != NULL);
-        size_t msg_rows = num_lines(curr_node->msg, term_cols);
+        int msg_rows = num_lines(curr_node->msg, term_cols);
 
         if (rows_used + msg_rows <= buf_rows) {
             rows_used += msg_rows;
@@ -221,12 +249,14 @@ size_t fill_buffer(
             continue;
         }
 
-        size_t rows_left = buf_rows - rows_used;
+        int rows_left = buf_rows - rows_used;
         // TODO: For newlines, you would start at 0 and count forward, checking
         // the string, and incrementing "rows_skipped" every 80 chars OR on a 
         // newline encountered (resetting chars counter) until "rows_skipped" is
         // equal to (msg_rows - rows_left). then you're left with proper offset.
-        msg_offset_start = term_cols * (msg_rows - rows_left);
+        //msg_offset_start = term_cols * (msg_rows - rows_left);
+        msg_offset_start = 
+            calc_screen_offset(curr_node->msg, msg_rows - rows_left, term_cols);
         rows_used += rows_left;
         assert(rows_used == buf_rows);
         // Keep curr_node in place because we start from there
@@ -250,7 +280,7 @@ size_t fill_buffer(
     // server sends many and if we need to keep them. Probably should.)
     // We also write newlines instead of null terms (except the final one) since
     // the buffer will be printed as one string.
-    size_t rows_filled_in_buf = num_lines(&msg[i_msg], term_cols);
+    int rows_filled_in_buf = num_lines(&msg[i_msg], term_cols);
     while (msg[i_msg] != '\0')
         if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
     buf[i_buf++] = '\n';
@@ -260,10 +290,13 @@ size_t fill_buffer(
         // possible number of characters that could appear on the screen.
         assert(i_buf + strlen(curr_node->msg) < buflen);
         msg = curr_node->msg;
-        size_t msg_rows = num_lines(msg, term_cols);
+        int msg_rows = num_lines(msg, term_cols);
         i_msg = 0;
         if (rows_filled_in_buf + msg_rows > buf_rows) {
-            size_t msg_offset_end = term_cols * (buf_rows - rows_filled_in_buf);
+            //size_t msg_offset_end = term_cols * (buf_rows - rows_filled_in_buf);
+            size_t msg_offset_end = calc_screen_offset(
+                    msg, buf_rows - rows_filled_in_buf, term_cols);
+
             while (i_msg < msg_offset_end && msg[i_msg] != '\0') 
                 if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
 
@@ -289,7 +322,74 @@ size_t fill_buffer(
 }
 
 int num_lines(char *msg, int cols) {
-    size_t len = strlen(msg);
+    size_t len = strlen_on_screen(msg);
     return len / cols + (len % cols == 0 ? 0 : 1);
+}
+
+size_t calc_screen_offset(const char *msg, size_t rows, size_t cols) {
+    size_t msglen = strlen(msg);
+
+    assert(msg != NULL);
+    assert(msglen > rows * cols);
+
+    // Offset is rows * cols plus all chars in each ANSI escape seq.
+    size_t offset = rows * cols;
+    size_t i = 0, printchars = 0;
+    while (printchars < rows * cols) {
+        assert(i < msglen);
+        assert(msg[i] != '\0');
+        assert(msg[i] != '\n');
+
+        // If we reach the end of the string before finding enough printable 
+        // chars, in theory it means the offset is 0 (whole string fits). In
+        // practice, it probably means a string with an unterminated ANSI escape
+        // sequence. Print it all so it can't hide.
+        // (This is all assuming asserts are turned off).
+        if (i >= msglen) return 0;
+
+        // Redundant, but the specificity of the earlier asserts is handy.
+        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
+        if (msg[i] == ESC[0]) {
+            while (msg[i] != 'm') {
+                offset++;
+                i++;
+                assert(msg[i] >= ' ');
+                assert(i < msglen);
+                // See earlier comment on this return case; this probably means
+                // a bad string, so don't let it hide.
+                if (i >= msglen) return 0;
+            }
+            offset++;
+        } else printchars++; 
+        i++;
+    }
+    return offset;
+}
+
+// This impl has tons of asserts because it's difficult to really validate the
+// ANSI escape sequences. Someone could send an unterminatd ANSI escape and blow
+// the whole thing up, so I'm aggressively flagging those.
+size_t strlen_on_screen(const char *msg) {
+    size_t msglen = strlen(msg);
+    size_t on_screen_len = 0;
+    for (size_t i = 0; i < msglen; i++) {
+        assert(msg[i] != '\n');
+        // Redundant, but the specificity of the newline assert is handy.
+        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
+
+        // Fast-forward through ANSI escapes
+        if (msg[i] == ESC[0]) {
+            while (msg[i++] != 'm' && i < msglen) {
+                assert(msg[i] != '\0');
+                assert(msg[i] != '\n');
+                // Redundant, but the specificity of the above two is handy.
+                assert(msg[i] >= ' ');
+                assert(i < msglen);
+            }
+        }
+        if (msg[i] != '\0') on_screen_len++;
+    }
+
+    return on_screen_len;
 }
 

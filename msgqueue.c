@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <windows.h>
@@ -20,7 +21,7 @@ static bool select_queue(msg_queue_id id, msglist **p_queue, HANDLE **p_mtx);
 
 static void DEBUG_assert_msglist_valid(msglist *list);
 
-void init_msg_queues() {
+void init_msg_queues(void) {
     msg_queue_in.head = msg_queue_in.tail = NULL;
     msg_queue_out.head = msg_queue_out.tail = NULL;
     msg_queue_ui.head = msg_queue_ui.tail = NULL;
@@ -62,15 +63,15 @@ void msglist_pushback_copy(msglist *list, const char* msg) {
     assert(msg != NULL);
     DEBUG_assert_msglist_valid(list);
 
+    rsize_t msg_size = strlen(msg) + 1;
     struct msgnode *node = (struct msgnode*) malloc(sizeof(struct msgnode));
-    char *msgcpy = (char*) malloc(strlen(msg) + 1);
+    char *msgcpy = (char*) malloc(msg_size);
     if (node == NULL || msgcpy == NULL) {
         // TODO: communicate fatal error
         log(LOGLEVEL_ERROR, "[msglist_pushback_copy()] FATAL: out of memory.");
         exit(23);
     }
-
-    strcpy(msgcpy, msg);
+    strcpy_s(msgcpy, msg_size, msg);
     node->msg = msgcpy;
     node->next = NULL;
 

@@ -33,7 +33,7 @@
 #define INPUT_BUFF_LEN 1024 * 4
 
 DWORD WINAPI thread_main_recv(LPVOID data);
-DWORD WINAPI thread_main_ui(LPVOID data);
+DWORD WINAPI thread_main_ui(LPVOID);
 void handlecmd_channel(char *cmd, SOCKET sock);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
 
@@ -159,10 +159,10 @@ int main(int argc, char* argv[]) {
         log_fmt(LOGLEVEL_DEV, "[main] Sent: %s", send_buff[i]);
     }
 
-    DWORD recv_thread_id = -1, ui_thread_id = -1;
-    HANDLE recv_thread = CreateThread(
+    DWORD recv_thread_id = 0, ui_thread_id = 0;
+    HANDLE h_recv_thread = CreateThread(
             NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
-    HANDLE ui_thread = CreateThread(
+    HANDLE h_ui_thread = CreateThread(
             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
     bool bye = false;
@@ -171,7 +171,6 @@ int main(int argc, char* argv[]) {
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
-//            printf("[main] SERVER SAYS: \"%s\"\n", curr_msgnode->msg);
             log_fmt(LOGLEVEL_SPAM, "[main] SERVER SAYS: \"%s\"", curr_msgnode->msg);
             curr_msgnode = curr_msgnode->next;
         }
@@ -212,6 +211,10 @@ int main(int argc, char* argv[]) {
         // Out msgs
     }
 
+    WaitForSingleObject(h_recv_thread, INFINITE);
+    WaitForSingleObject(h_ui_thread, INFINITE);
+
+
     closesocket(sock);
     WSACleanup();
 
@@ -223,7 +226,7 @@ static int send_as_irc(SOCKET sock, const char* msg) {
     size_t msg_len = strlen(msg) + 2;
     assert(msg_len <= IRC_MSG_BUF_LEN);
     char send_buff[IRC_MSG_BUF_LEN];
-    strcpy(send_buff, msg);
+    strcpy_s(send_buff, sizeof(send_buff), msg);
     send_buff[msg_len - 2] = '\r';
     send_buff[msg_len - 1] = '\n';
 
@@ -260,9 +263,7 @@ static bool try_send_as_irc(SOCKET sock, const char* fmt, ...) {
         // TODO: communicate failure
         log_fmt(LOGLEVEL_ERROR, "[try_send_as_irc] send() failed: %lu",
                 WSAGetLastError());
-        closesocket(sock);
-        WSACleanup();
-        exit(23);
+        return false;
     }
     return true;
 }
@@ -282,9 +283,18 @@ void handlecmd_channel(char *cmd, SOCKET sock) {
     assert(cmd != NULL);
     assert(sock != INVALID_SOCKET);
 
-    char* tk_cmd = strtok(cmd, " ");
+    // These are used internally by strtok_s()
+    // TODO: use this when implementing x-plat: rsize_t strmax = sizeof(cmd);
+    const char* delim = " ";
+    char *next_tk = NULL;
+
+    // TODO: This is the Microsoft version. Of course it's got a different
+    // contract than the C11 one. To make this cross-plat, you need to define a
+    // macro that also takes `rsize *strmax` (initialized to sizeof(cmd)) and
+    // passes that each time if not on MSVC.
+    char* tk_cmd = strtok_s(cmd, delim, &next_tk);
     assert(strcmp(tk_cmd, "channel") == 0);
-    char* tk_action = strtok(NULL, " ");
+    char* tk_action = strtok_s(NULL, delim, &next_tk);
     if (tk_action == NULL || strcmp(tk_action, "help") == 0) {
         // TODO: output
         termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
@@ -304,8 +314,10 @@ void handlecmd_channel(char *cmd, SOCKET sock) {
                 "\tLeave the specified channel.\n");
     }
     else if (strcmp(tk_action, "list") == 0) {
-        char* tk_names = strtok(NULL, " ");
-        if (tk_names != NULL && strtok(NULL, " ") != NULL) {
+        char* tk_names = strtok_s(NULL, delim, &next_tk);
+        if (tk_names != NULL &&
+            strtok_s(NULL, delim, &next_tk) != NULL)
+        {
             // TODO: output
             termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
             termutils_set_bold(true);
@@ -322,6 +334,7 @@ void handlecmd_channel(char *cmd, SOCKET sock) {
 
 
 DWORD WINAPI thread_main_ui(LPVOID data) {
+    UNREFERENCED_PARAMETER(data);
     // TODO: This function should be refactored to use a string reading function
     // that mallocs to tolerate any user input size so we can always tell the
     // user how much smaller their message needs to be and to avoid an
@@ -341,7 +354,7 @@ DWORD WINAPI thread_main_ui(LPVOID data) {
             log_fmt(LOGLEVEL_ERROR, "[thread_main_ui] fgets() gave NULL str. "
                     "ferror(stdin): %d", ferror(stdin));
             // TODO: communicate failure
-            exit(23);
+            continue;
         }
 
         // TODO: certainly this can be refactored.
@@ -354,7 +367,7 @@ DWORD WINAPI thread_main_ui(LPVOID data) {
                         "sizeof(ui_buff)=%d, str='%s'", str_len, INPUT_BUFF_LEN,
                         sizeof(ui_buff), str);
                 // TODO: communicate failure
-                exit(23);
+                continue;
             }
             //TODO:output
             termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
@@ -401,7 +414,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         if (i_buff_offset >= RECV_BUFF_LEN) {
             log(LOGLEVEL_ERROR, "[thread_main_recv] FATAL: Ran out of buffer.");
             // TODO: communiate failure and clean up
-            exit(23);
+            return 23;
         }
 
         // Start at end of the unprocessed data and search backwards for \r\n
@@ -423,7 +436,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         // Parse recv_buffer data into messages and build a msglist
         msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
         size_t msg_start = 0;
-        for (size_t i = 0; i < i_last_delim; i++) {
+        for (int i = 0; i < i_last_delim; i++) {
             if (!(recv_buff[i] == '\r' && recv_buff[i + 1] == '\n'))
                 continue;
 
@@ -446,7 +459,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         assert(i_last_delim < i_buff_offset);
 
         // Move any buffer data after the last delim to the beginning.
-        size_t copy_from = i_last_delim + 1, copy_to = 0;
+        int copy_from = i_last_delim + 1, copy_to = 0;
         while (copy_from < i_buff_offset) 
             recv_buff[copy_to++] = recv_buff[copy_from++];
         i_buff_offset = copy_to;
@@ -456,7 +469,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
         log_fmt(LOGLEVEL_ERROR, "[thread_main_recv] recv() failed: %lu",
                 WSAGetLastError());
         // TODO: Communicate failure and cleanup
-        exit(23);
+        return 23;
     }
 
     log(LOGLEVEL_WARNING, "[thread_main_recv] Server disconnected, apparently");
