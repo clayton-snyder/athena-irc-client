@@ -1,3 +1,4 @@
+#include "channel.h"
 #include "log.h"
 #include "msgqueue.h"
 #include "stringutils.h"
