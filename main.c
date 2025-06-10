@@ -1,4 +1,4 @@
-#include "channel.h"
+#include "context_framework.h"
 #include "log.h"
 #include "msgqueue.h"
 #include "stringutils.h"
@@ -77,6 +77,16 @@ int main(int argc, char* argv[]) {
     
     // TODO: placement?
     init_msg_queues();
+
+    msglog_list msglog_home = { 0 }; 
+    context ctx_home = {
+        .type = CONTEXTTYPE_SERVER_HOME,
+        .display_text = "Not Connected",
+        .id = get_next_context_id(), 
+        .msglog = msglog_home, 
+        .channel_maybe = NULL
+    };
+    log_fmt(LOGLEVEL_SPAM, "[main] Created context: %s", ctx_home.display_text);
 
     // Initiate use of WS2_32.dll, requesting version 2.2
     WSADATA wsa_data;
