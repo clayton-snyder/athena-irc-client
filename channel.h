@@ -31,13 +31,13 @@ typedef enum channel_user_state {
     CHANNEL_USER_STATE_PARTED,
     CHANNEL_USER_STATE_KICKED,
     CHANNEL_USER_STATE_BANNED,
-}
+} channel_user_state;
 
 typedef struct channel {
     char *name; // TODO: can this be fixed size?
     chanlog_list log;
     channel_user_state state;
-}
+} channel;
 
 // Copies the provided string for use in the new log entry. Use if you need your
 // string after calling this or if passing a stack-allocated char[].
