@@ -1,6 +1,7 @@
 #include "context_framework.h"
 #include "log.h"
 #include "msgqueue.h"
+#include "msgutils.h"
 #include "stringutils.h"
 #include "terminalutils.h"
 
@@ -38,9 +39,12 @@ DWORD WINAPI thread_main_ui(LPVOID);
 void handlecmd_channel(char *cmd, SOCKET sock);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
 
+
 // TODO: rename, and do we need the bool return?
 static bool try_send_as_irc(SOCKET sock, const char* fmt, ...);
 static int send_as_irc(SOCKET sock, const char* msg);
+static bool build_server_msg(
+        char *const buf, rsize_t bufsize, const char* const msg);
 // TODO: should this return bool?
 bool handle_local_command(char *cmd_str, SOCKET sock);
 
@@ -78,6 +82,7 @@ int main(int argc, char* argv[]) {
     // TODO: placement?
     init_msg_queues();
 
+    // TODO: maybe move to "init_contexts()", possibly in context_mgr
     msglog_list msglog_home = { 0 }; 
     context ctx_home = {
         .type = CONTEXTTYPE_SERVER_HOME,
@@ -151,6 +156,7 @@ int main(int argc, char* argv[]) {
 
     log(LOGLEVEL_INFO, "Connected, apparently.\n");
 
+    // TODO: tell server we're not capable of processing tags
     const char *send_buff[] = {
         "NICK code\r\n",
         "USER ircC 0 * :AthenaIRC Client\r\n",
@@ -177,12 +183,22 @@ int main(int argc, char* argv[]) {
             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
     bool bye = false;
+//     char buf_logmsg[1024]; // TODO: establish actual max
     while (!bye) {
         // INCOMING msgs
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
-            log_fmt(LOGLEVEL_SPAM, "[main] SERVER SAYS: \"%s\"", curr_msgnode->msg);
+
+            char timestamp_buf[20];
+            msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
+                    TIMESTAMP_FORMAT_TIME_ONLY);
+
+            log_fmt(LOGLEVEL_SPAM, "[main] [%s] SERVER SAYS: \"%s\"",
+                    timestamp_buf, curr_msgnode->msg);
+//            build_server_msg(buf_logmsg, sizeof(buf_logmsg), curr_msgnode->msg);
+//            msglog_pushback_copy(&ctx_home.msglog, buf_logmsg);
+
             curr_msgnode = curr_msgnode->next;
         }
         msglist_free(&msgs_in);
@@ -231,6 +247,7 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
 
 static int send_as_irc(SOCKET sock, const char* msg) {
     // We need to replace \0 with \r\n
