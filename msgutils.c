@@ -16,22 +16,32 @@
 //     return c >= '0' && c <= '9';
 // }
 
-static void handle_invalid(
-        const char *rawmsg, const char *stage, ircmsg *new_ircmsg);
+// Prints a log error with provided prefix, stage, and whatever raw msg string 
+// can be provided, and frees the provided ircmsg. 
+static void handle_bad_format(const char *rawmsg, const char *stage,
+        ircmsg *new_ircmsg, const char* logpfx);
 
 void DEBUG_ircmsg_print(ircmsg *ircm);
 
-static void handle_invalid(
-        const char *rawmsg, const char *stage, ircmsg *new_ircmsg) 
+static void handle_bad_format(const char *rawmsg, const char *stage,
+        ircmsg *new_ircmsg, const char* logpfx) 
 {
-    log_fmt(LOGLEVEL_ERROR, "[msgutils_ircmsg_parse()] Could not parse message "
-            "as valid IRC (failed during %s parsing): '%s'", stage, rawmsg);
+    log_fmt(LOGLEVEL_ERROR, "[%s] Could not parse message as valid IRC (failed "
+            "when parsing %s): '%s'", logpfx, stage, rawmsg);
     // TODO: debug assert
     assert(!"Could not parse message as valid IRC.");
     msgutils_ircmsg_free(new_ircmsg);
 }
 
-ircmsg* msgutils_ircmsg_parse (char *rawmsg) {
+// bool msgutils_ircmsg_validate(ircmsg *ircm) {
+// TODO: GENERAL validation; is the text in each field allowed by the grammar
+//       NOT evaluating if the logic makes sense given state, matching params to
+//       commands, etc.
+//      // Params can't have colons in them except the last
+//      // Command is real
+// }
+
+ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
     const char *const logpfx = "[msgutils_ircmsg_parse()]";
     log_fmt(LOGLEVEL_DEV, "%s Attempting to parse: '%s'", logpfx, rawmsg);
 
@@ -47,7 +57,7 @@ ircmsg* msgutils_ircmsg_parse (char *rawmsg) {
 
     if (has_source) {
         if (rawmsg[i_rawmsg + 1] == '\0' || rawmsg[i_rawmsg + 1] == ' ') {
-            handle_invalid(rawmsg, "source", new_ircmsg);
+            handle_bad_format(rawmsg, "source", new_ircmsg, logpfx);
             return NULL;
         }
 
@@ -64,7 +74,7 @@ ircmsg* msgutils_ircmsg_parse (char *rawmsg) {
 
     char *tk_cmd = strtok_s(has_source ? NULL : rawmsg, " ", &next_tk);
     if (tk_cmd == NULL) {
-        handle_invalid(next_tk, "command", new_ircmsg);
+        handle_bad_format(next_tk, "command", new_ircmsg, logpfx);
         return NULL;
     }
     rsize_t dest_size = strlen(tk_cmd) + 1;
