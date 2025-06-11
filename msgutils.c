@@ -1,6 +1,7 @@
 #include "log.h"
 #include "msgqueue.h"
 #include "msgutils.h"
+#include "terminalutils.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -42,8 +43,8 @@ static void handle_bad_format(const char *rawmsg, const char *stage,
 // }
 
 ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
-    const char *const logpfx = "[msgutils_ircmsg_parse()]";
-    log_fmt(LOGLEVEL_DEV, "%s Attempting to parse: '%s'", logpfx, rawmsg);
+    const_str logpfx = "[msgutils_ircmsg_parse()]";
+    log_fmt(LOGLEVEL_SPAM, "%s Attempting to parse: '%s'", logpfx, rawmsg);
 
     ircmsg *new_ircmsg = (ircmsg *) calloc(1, sizeof(ircmsg));
     if (new_ircmsg == NULL) {
@@ -64,10 +65,10 @@ ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
         // TODO: platform-specific code; MSFT strtok_s (strcpy_s too?)
         char *tk_source = strtok_s(rawmsg + 1, " ", &next_tk);
         if (tk_source != NULL) {
-            rsize_t dest_size = strlen(tk_source) + 1;
+            size_t dest_size = strlen(tk_source) + 1;
             new_ircmsg->source = (char *) malloc(dest_size);
             strcpy_s(new_ircmsg->source, dest_size, tk_source);
-            log_fmt(LOGLEVEL_DEV, "%s Parsed source: '%s'", logpfx,
+            log_fmt(LOGLEVEL_SPAM, "%s Parsed source: '%s'", logpfx,
                     new_ircmsg->source);
         }
     }
@@ -77,10 +78,10 @@ ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
         handle_bad_format(next_tk, "command", new_ircmsg, logpfx);
         return NULL;
     }
-    rsize_t dest_size = strlen(tk_cmd) + 1;
+    size_t dest_size = strlen(tk_cmd) + 1;
     new_ircmsg->command = (char *) malloc(dest_size);
     strcpy_s(new_ircmsg->command, dest_size, tk_cmd);
-    log_fmt(LOGLEVEL_DEV,
+    log_fmt(LOGLEVEL_SPAM,
             "%s Parsed command: '%s'", logpfx, new_ircmsg->command);
 
     // A ':' in the parameters section indicates the final parameter that
@@ -106,16 +107,16 @@ ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
     while (tk_param != NULL) {
         // add param
         msglist_pushback_copy(&new_ircmsg->params, tk_param);
-        log_fmt(LOGLEVEL_DEV, "%s Parsed param: '%s'", logpfx, tk_param);
+        log_fmt(LOGLEVEL_SPAM, "%s Parsed param: '%s'", logpfx, tk_param);
         tk_param = strtok_s(NULL, " ", &next_tk);
     }
 
     if (tk_colon_param != NULL) {
         msglist_pushback_copy(&new_ircmsg->params, tk_colon_param);
-        log_fmt(LOGLEVEL_DEV, "%s Parsed param: '%s'", logpfx, tk_colon_param);
+        log_fmt(LOGLEVEL_SPAM, "%s Parsed param: '%s'", logpfx, tk_colon_param);
     }
 
-    log_fmt(LOGLEVEL_DEV, "%s Finished parsing ircmsg.", logpfx);
+    log_fmt(LOGLEVEL_SPAM, "%s Finished parsing ircmsg.", logpfx);
 
     return new_ircmsg;
 }
@@ -126,12 +127,25 @@ void DEBUG_ircmsg_print(ircmsg *ircm) {
         return;
     }
 
-    printf("source: '%s'\ncommand: '%s'\n", ircm->source, ircm->command);
+    printf("   source: '%s'\n"
+           "   command: '%s'\n", ircm->source, ircm->command);
 
-    printf("params: (count=%zu)[", ircm->params.count);
+    printf("   params: (count=%zu)[", ircm->params.count);
     struct msgnode* curr = ircm->params.head;
+    size_t n_param = 0;
     while (curr != NULL) {
-        printf("'%s',", curr->msg);
+        termutils_set_text_color(TERMUTILS_COLOR_CYAN);
+        termutils_set_bold(true);
+        printf("%zu", ++n_param);
+        termutils_reset_text_color();
+        termutils_set_bold(false);
+        printf("='");
+        termutils_set_italic(true);
+        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+        printf("%s", curr->msg);
+        termutils_set_italic(false);
+        termutils_reset_text_color();
+        printf("', ");
         curr = curr->next;
     }
     printf("]\n");
@@ -151,7 +165,7 @@ void msgutils_ircmsg_free(ircmsg *ircm) {
 }
 
 bool msgutils_get_timestamp(
-        char *const buf, rsize_t bufsize, bool utc, timestamp_format format)
+        char *const buf, size_t bufsize, bool utc, timestamp_format format)
 {
     time_t time_now = time(NULL);
     struct tm tm_now;
@@ -193,8 +207,42 @@ bool msgutils_get_timestamp(
     return true;
 }
 
-// bool msgutils_buildmsg_server(
-//         char *const buf, rsize_t bufsize, const char *const rawmsg)
-// {
-//     return false;
-// }
+// TODO: don't take ircmsg; take individual params. Call this from handler that
+// reads ircmsg and extracts the params based on command
+bool msgutils_buildmsg_privmsg(char *const buf, size_t bufsize,
+        const_str from, const_str msg, const_str timestamp)
+{
+//     const_str logpfx = "msgutils_buildmsg_server()";
+
+    // The size checking is strange here, but avoids a massive function. Since
+    // the termutils functions and sprintf_s() won't write anything that can't
+    // fit, we can plow through those and only check n_bytes before we write a
+    // character manually. We avoid adding -1 (from sprintf_s() failure) to
+    // n_bytes by simply returning false if we ever see it.
+    size_t n_bytes = 0;
+    n_bytes += termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_BLUE);
+
+    int bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "[%s] ", timestamp);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+    
+    n_bytes += termutils_set_text_color_buf(buf + n_bytes, bufsize - n_bytes, 
+            TERMUTILS_COLOR_YELLOW);
+    if (n_bytes >= bufsize) return false;
+    buf[n_bytes++] = '<';
+
+    n_bytes += termutils_set_bold_buf(buf + n_bytes, bufsize - n_bytes, true);
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "%s", from);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+
+    n_bytes += termutils_set_bold_buf(buf + n_bytes, bufsize - n_bytes, false);
+    if (n_bytes >= bufsize) return false;
+    buf[n_bytes++] = '>';
+    n_bytes += termutils_reset_text_color_buf(buf + n_bytes, bufsize - n_bytes);
+
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, " %s", msg);
+    if (bytes < 0) return false;
+
+    return true;
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "athena_types.h"
 #include "msgqueue.h"
 
 #include <stdbool.h>
@@ -18,6 +19,15 @@ typedef enum timestamp_format {
     TIMESTAMP_FORMAT_MONTH_DAY_NOTIME = 5,
 } timestamp_format;
 
+// NOTE: This function expects a null-terminated string, NOT CRLF. This is based
+// on the expectation that the recv() loop is overwriting the CRLFs as it
+// receives messages from the server, which makes parsing the incoming socket
+// data easier.
+// If the provided string has a bad format, you'll get back NULL and a 
+// NULL is returned if the provided string has a bad format, and a descriptive
+// error is logged. Otherwise, you'll receive a pointer to a heap-allocated
+// 'ircmsg' struct. Use msgutils_ircmsg_free() to deallocate it.
+// The 'ircmsg' struct fields are not guaranteed to be validated.
 ircmsg* msgutils_ircmsg_parse(char *raw_msg);
 
 void msgutils_ircmsg_free(ircmsg *ircm);
@@ -25,10 +35,10 @@ void msgutils_ircmsg_free(ircmsg *ircm);
 void DEBUG_ircmsg_print(ircmsg *ircm);
 
 bool msgutils_get_timestamp(
-        char *const buf, rsize_t bufsize, bool utc, timestamp_format format);
+        char *const buf, size_t bufsize, bool utc, timestamp_format format);
 
-bool msgutils_buildmsg_server(
-        char *const buf, rsize_t bufsize, const char *const raw_msg);
+bool msgutils_buildmsg_privmsg(char *const buf, size_t bufsize,
+        const_str from, const_str msg, const_str timestamp);
 
 bool msgutils_buildmsg_user(
-        char *const buf, rsize_t bufsize, const char *const raw_msg);
+        char *const buf, size_t bufsize, const_str raw_msg);

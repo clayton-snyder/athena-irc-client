@@ -84,6 +84,7 @@ int main(int argc, char* argv[]) {
 
     // TODO: maybe move to "init_contexts()", possibly in context_mgr
     msglog_list msglog_home = { 0 }; 
+    msglog_home.max_size_bytes = MSGLOG_DEFAULT_MAX_BYTES;
     context ctx_home = {
         .type = CONTEXTTYPE_SERVER_HOME,
         .display_text = "Not Connected",
@@ -182,8 +183,10 @@ int main(int argc, char* argv[]) {
     HANDLE h_ui_thread = CreateThread(
             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
+    // 511 bytes for the message + metadata (timestamp, author) + ANSI escapes
+    // for formatting. 1024 is generous, but this gets re-used. 
+    char buf_logmsg[1024] = {0};
     bool bye = false;
-//     char buf_logmsg[1024]; // TODO: establish actual max
     while (!bye) {
         // INCOMING msgs
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
@@ -194,12 +197,27 @@ int main(int argc, char* argv[]) {
             msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
                     TIMESTAMP_FORMAT_TIME_ONLY);
 
-            log_fmt(LOGLEVEL_SPAM, "[main] [%s] SERVER SAYS: \"%s\"",
+            log_fmt(LOGLEVEL_DEV, "[main] [%s] SERVER SAYS: \"%s\"",
                     timestamp_buf, curr_msgnode->msg);
-//            build_server_msg(buf_logmsg, sizeof(buf_logmsg), curr_msgnode->msg);
-//            msglog_pushback_copy(&ctx_home.msglog, buf_logmsg);
+
+            ircmsg *ircm = msgutils_ircmsg_parse(curr_msgnode->msg);
 
             curr_msgnode = curr_msgnode->next;
+
+            if (ircm == NULL) continue;
+
+            // TODO: evaluate what to do with the msg. Pass to handle_servermsg?
+            if (strcmp(ircm->command, "PRIVMSG") == 0) {
+                // TODO: call handler. don't print. add to ctx_home.
+                bool success = msgutils_buildmsg_privmsg(
+                        buf_logmsg, sizeof(buf_logmsg),
+                        ircm->source, ircm->params.tail->msg, timestamp_buf);
+                if (success) {
+                    printf("%s\n", buf_logmsg);
+                    msglog_pushback_copy(&ctx_home.msglog, buf_logmsg);
+                }
+            }
+            msgutils_ircmsg_free(ircm);
         }
         msglist_free(&msgs_in);
 
