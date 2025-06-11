@@ -1,5 +1,7 @@
 #include "context_framework.h"
 
+#include "log.h"
+
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +17,7 @@ unsigned int get_next_context_id(void) {
     return context_id_counter++;
 }
 
-void msglog_pushback_copy(msglog_list *const msglog, const char *const msg) {
+void msglog_pushback_copy(msglog_list *const msglog, const_str msg) {
     assert(msglog != NULL);
     assert(msg != NULL);
 
@@ -26,7 +28,7 @@ void msglog_pushback_copy(msglog_list *const msglog, const char *const msg) {
     msglog_node *new_node = (msglog_node *) malloc(sizeof(msglog_node));
     assert(new_node != NULL);
 
-    rsize_t msg_bytes = (strlen(msg) + 1) * sizeof(char);
+    size_t msg_bytes = (strlen(msg) + 1) * sizeof(char);
     new_node->msg = (char *) malloc(msg_bytes);
     assert(new_node->msg != NULL);
 
@@ -36,6 +38,8 @@ void msglog_pushback_copy(msglog_list *const msglog, const char *const msg) {
     if (msglog->tail != NULL) {
         assert(msglog->head != NULL);
         new_node->prev = msglog->tail;
+        msglog->tail->next = new_node;
+        msglog->tail = new_node;
         msglog->n_msgs++;
         msglog->curr_size_bytes += msg_bytes;
         int bytes_left = msglog->max_size_bytes - msglog->curr_size_bytes;
@@ -73,6 +77,8 @@ void msglog_pushback_take(msglog_list *const msglog, char *const msg) {
     if (msglog->tail != NULL) {
         assert(msglog->head != NULL);
         new_node->prev = msglog->tail;
+        msglog->tail->next = new_node;
+        msglog->tail = new_node;
         msglog->n_msgs++;
         msglog->curr_size_bytes += strlen(new_node->msg) + 1;
         int bytes_left = msglog->max_size_bytes - msglog->curr_size_bytes;
@@ -110,7 +116,7 @@ void msglog_evict_min_to_free(msglog_list *const msglog, int free_bytes) {
         size_t msg_bytes = strlen(evictme->msg) + 1;
 
         free(evictme->msg);
-        freed_bytes += msg_bytes; // TODO: type mismatch (cast strlen to int)
+        freed_bytes += msg_bytes;
 
         free(evictme);
         evicted_nodes++;
@@ -167,6 +173,10 @@ static void DEBUG_validate_msglog_list(const msglog_list *const msglog) {
         curr = curr->next;
     }
     assert(last == msglog->tail);
+    log_fmt(LOGLEVEL_DEV, "actual_size_bytes=%d, curr_size_bytes=%d\n"
+            "actual_n_msgs=%d, n_msgs=%d\n",
+            actual_size_bytes, msglog->curr_size_bytes,
+            actual_n_msgs, msglog->n_msgs);
     assert(actual_size_bytes == msglog->curr_size_bytes);
     assert(actual_n_msgs == msglog->n_msgs);
 

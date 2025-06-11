@@ -1,5 +1,7 @@
 #pragma once
 
+#include "athena_types.h"
+
 // TODO: very small for now for testing. Probably 1MB is a better default.
 // TODO: also need a global max and global tracking.
 // TODO: also need per-msg max
@@ -63,7 +65,7 @@ unsigned int get_next_context_id(void);
 
 // Copies the provided string for use in the new log entry. Use if you need your
 // string after calling this or if passing a stack-allocated char[].
-void msglog_pushback_copy(msglog_list *const msglog, const char *const msg);
+void msglog_pushback_copy(msglog_list *const msglog, const_str msg);
 
 // Passes ownership of the provided string to the msglog_list, which will free
 // it when appropriate. Callers should not free the string, continue accessing 
