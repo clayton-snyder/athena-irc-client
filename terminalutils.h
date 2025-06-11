@@ -50,51 +50,51 @@ typedef enum {
     TERMUTILS_COLOR_DEFAULT
 } termutils_color;
 
-bool termutils_set_bold_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_faint_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_italic_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_underline_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_blinking_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_inverse_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_hidden_buf(char *const buf, rsize_t maxlen, bool on);
-bool termutils_set_strikethrough_buf(
-        char *const buf, rsize_t maxlen, bool on);
+size_t termutils_set_bold_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_faint_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_italic_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_underline_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_blinking_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_inverse_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_hidden_buf(char *const buf, size_t maxlen, bool on);
+size_t termutils_set_strikethrough_buf(
+        char *const buf, size_t maxlen, bool on);
 
 // Sets the text (foreground) color using the 8-16 color set (some terminals may
 // not support the _BRIGHT versions of colors).
-bool termutils_set_text_color_buf(
-        char *const buf, rsize_t maxlen, termutils_color color);
+size_t termutils_set_text_color_buf(
+        char *const buf, size_t maxlen, termutils_color color);
 
 // Sets the text (foreground) color using the ANSI 256 color table code.
-bool termutils_set_text_color_256_buf(
-        char *const buf, rsize_t maxlen, int color_code);
+size_t termutils_set_text_color_256_buf(
+        char *const buf, size_t maxlen, int color_code);
 
 // Same as calling `set_text_color(TERMUTILS_COLOR_DEFAULT);`
-bool termutils_reset_text_color_buf(char *const buf, rsize_t maxlen);
+size_t termutils_reset_text_color_buf(char *const buf, size_t maxlen);
 
 // Sets the background color using the 8-16 color set (some terminals may not
 // support the _BRIGHT versions of colors).
-bool termutils_set_bg_color_buf(
-        char *const buf, rsize_t maxlen, termutils_color color);
+size_t termutils_set_bg_color_buf(
+        char *const buf, size_t maxlen, termutils_color color);
 
 // Sets the background color using the ANSI 256 color table code.
-bool termutils_set_bg_color_256_buf(
-        char *const buf, rsize_t maxlen, int color_code);
+size_t termutils_set_bg_color_256_buf(
+        char *const buf, size_t maxlen, int color_code);
 
 // Same as calling `set_bg_color(TERMUTILS_COLOR_DEFAULT);`
-bool termutils_reset_bg_color_buf(char *const buf, rsize_t maxlen);
+size_t termutils_reset_bg_color_buf(char *const buf, size_t maxlen);
 
 // Resets all colors and formatting options to their defaults.
-bool termutils_reset_all_buf(char *const buf, rsize_t maxlen);
+size_t termutils_reset_all_buf(char *const buf, size_t maxlen);
 
 // color_str can be a hex string or a color name. 
-bool termutils_set_cursor_color_buf(
-        char *const buf, rsize_t maxlen, const char *const color_str);
+size_t termutils_set_cursor_color_buf(
+        char *const buf, size_t maxlen, const char *const color_str);
 
 // I have noticed this not working in some terminals (e.g., WezTerm). OSC 112
 // should reset the cursor color to default, but I'm not sure how default gets
 // set in the first place. It works on Windows Terminal.
-bool termutils_reset_cursor_color_buf(char *const buf, rsize_t maxlen);
+size_t termutils_reset_cursor_color_buf(char *const buf, size_t maxlen);
 
 void termutils_set_bold(bool on);
 void termutils_set_faint(bool on);
