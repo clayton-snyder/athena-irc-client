@@ -3,7 +3,6 @@
 #include "msgqueue.h"
 #include "msgutils.h"
 #include "screen_framework.h"
-#include "stringutils.h"
 #include "terminalutils.h"
 
 #include <assert.h>
@@ -16,38 +15,14 @@
 
 #define RECV_BUFF_LEN 1024 * 8
 
-/* BUF ALLOCATION GUIDE:
- * buffer to hold snprintf result: char cmd_buf[MAX_CMD_LEN + 1]
- * buffer to send to IRC server: char cmd_buf[IRC_MSG_BUF_LEN]
- */
-
-// Max IRC message allowed is 512 including the CRLF delimiter. This macro value
-// should be used when validating strlen() of messages prior to preparing them
-// with CRLF delimiter. Use this macro value + 1 when allocating buffers to 
-// prepare messages to pass to send_as_irc().
-#define MAX_CMD_LEN 510
-
-// Use this to allocate buffers that will be sent to the IRC server. The two 
-// extra bytes are reserved for CR and LF.
-#define IRC_MSG_BUF_LEN (MAX_CMD_LEN + 2)
-
 // A longer input buffer helps because we can tell the user exactly how much
 // they need to reduce their message by as long as we can read it all.
 #define INPUT_BUFF_LEN 1024 * 4
 
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID);
-void handlecmd_channel(char *cmd, SOCKET sock);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
 
-
-// TODO: rename, and do we need the bool return?
-static bool try_send_as_irc(SOCKET sock, const char* fmt, ...);
-static int send_as_irc(SOCKET sock, const char* msg);
-static bool build_server_msg(
-        char *const buf, rsize_t bufsize, const char* const msg);
-// TODO: should this return bool?
-bool handle_local_command(char *cmd_str, SOCKET sock);
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -205,28 +180,9 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            // TODO: Check type of command. Options: 
-            // * It's a local command prefix. Try to process it
-            // * It's a "send to server" prefix. Validate minimally, remove
-            //      prefix, send to OQ.
-            // * No prefix. Validate user is in a channel, and len, send to OQ. 
-            // NOTE: Things going to OQ should be IRC messages!!
-
-            // TODO: refactor this garb
-            if (msg[0] == '!') {
-                // Local command
-                bye = handle_local_command(msg + 1, sock);
-                if (bye) break;
-            }
-            else if (msg[0] == '`') {
-                try_send_as_irc(sock, (msg + 1));
-            } else {
-                // TODO: Validate if they're in a channel
-                // TODO: move this to a global string
-                char* fmt = "PRIVMSG %s :%s";
-                // TODO: insert actual channel param.
-                try_send_as_irc(sock, fmt, "#codetest", msg);
-            }
+            // TODO: fix the exit flow
+            bye = handle_user_command(msg, sock);
+            if (bye) break;
         }
         msglist_free(&msgs_ui);
         // Out msgs
@@ -240,118 +196,6 @@ int main(int argc, char* argv[]) {
     WSACleanup();
 
     return 0;
-}
-
-
-static int send_as_irc(SOCKET sock, const char* msg) {
-    // We need to replace \0 with \r\n
-    size_t msg_len = strlen(msg) + 2;
-    assert(msg_len <= IRC_MSG_BUF_LEN);
-    char send_buff[IRC_MSG_BUF_LEN];
-    strcpy_s(send_buff, sizeof(send_buff), msg);
-    send_buff[msg_len - 2] = '\r';
-    send_buff[msg_len - 1] = '\n';
-
-    return send(sock, send_buff, msg_len, 0);
-}
-
-static bool try_send_as_irc(SOCKET sock, const char* fmt, ...) {
-    // TODO: validate if this works with empty va_list. I think it just has to
-    // match the number of formatters in fmt...
-    va_list fmt_args;
-    va_start(fmt_args, fmt);
-    // vsnprintf writes up to bufsz - 1 characters, plus the null term. Ergo
-    // MAX_CMD_LEN + 1 gives us room for CRLF if we overwrite the null term.
-    char irc_cmd[MAX_CMD_LEN + 1];
-    int full_len = vsnprintf(irc_cmd, sizeof(irc_cmd), fmt, fmt_args);
-    va_end(fmt_args);
-
-    // vsnprintf returns the would-be expanded string length (without the null
-    // term), so we can use it to check for truncation.
-    if (full_len + 2 > IRC_MSG_BUF_LEN) {
-        log_fmt(LOGLEVEL_WARNING, "[main] Expanded message too long (%d); not "
-                "sent: \'%s\'(truncated)", full_len, irc_cmd);
-        //TODO: OUTPUT
-        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-        termutils_set_bold(true);
-        printf("Your message is too long. Reduce it by %d characters.\n",
-                full_len + 2 - IRC_MSG_BUF_LEN);
-        termutils_reset_all();
-        return false;
-    }
-
-    int result = send_as_irc(sock, irc_cmd);
-    if (result == SOCKET_ERROR) {
-        // TODO: communicate failure
-        log_fmt(LOGLEVEL_ERROR, "[try_send_as_irc] send() failed: %lu",
-                WSAGetLastError());
-        return false;
-    }
-    return true;
-}
-
-// Returns true if program should exit.
-bool handle_local_command(char *cmd, SOCKET sock) {
-    assert(cmd != NULL);
-    assert(sock != INVALID_SOCKET);
-    log_fmt(LOGLEVEL_DEV, "[handle_local_command] Processing '%s'", cmd);
-    if (strcmp(cmd, "BYE") == 0) return true;
-    if (strutils_startswith(cmd, "channel ") || strcmp(cmd, "channel") == 0)
-        handlecmd_channel(cmd, sock);
-    return false;
-}
-
-void handlecmd_channel(char *cmd, SOCKET sock) {
-    assert(cmd != NULL);
-    assert(sock != INVALID_SOCKET);
-
-    // These are used internally by strtok_s()
-    // TODO: use this when implementing x-plat: rsize_t strmax = sizeof(cmd);
-    const char* delim = " ";
-    char *next_tk = NULL;
-
-    // TODO: This is the Microsoft version. Of course it's got a different
-    // contract than the C11 one. To make this cross-plat, you need to define a
-    // macro that also takes `rsize *strmax` (initialized to sizeof(cmd)) and
-    // passes that each time if not on MSVC.
-    char* tk_cmd = strtok_s(cmd, delim, &next_tk);
-    assert(strcmp(tk_cmd, "channel") == 0);
-    char* tk_action = strtok_s(NULL, delim, &next_tk);
-    if (tk_action == NULL || strcmp(tk_action, "help") == 0) {
-        // TODO: output
-        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-        // TODO: HELP string
-        puts("Usage: !channel <action> [args...]");
-        puts("Avaiable actions for !channel:\n"
-                "* list [names]\n"
-                "\tDisplay info about the listed channels."
-                "\n\t[names] is a comma-separated list (with NO spaces)."
-                "\n\tIf [names] is omitted, lists all channels.\n"
-                "* join <name>\n"
-                "\tJoin or create the specified channel.\n"
-                "* switch <name>\n"
-                "\tSwitch the active (displayed) channel to the one specified."
-                "\n\tYou must have previously joined the channel.\n"
-                "* part <name>\n"
-                "\tLeave the specified channel.\n");
-    }
-    else if (strcmp(tk_action, "list") == 0) {
-        char* tk_names = strtok_s(NULL, delim, &next_tk);
-        if (tk_names != NULL &&
-            strtok_s(NULL, delim, &next_tk) != NULL)
-        {
-            // TODO: output
-            termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-            termutils_set_bold(true);
-            puts("Too many arguments for 'list' command. [names] should be "
-                    "a comma-separated list (with no spaces) of the channel"
-                    " names you wish to display info about.");
-            termutils_reset_all();
-        }
-        try_send_as_irc(sock, "LIST %s", tk_names ? tk_names : "");
-    }
-    // TODO: other !channel actions
-    log_fmt(LOGLEVEL_DEV, "Performed !channel %s", tk_action ? tk_action : "");
 }
 
 
