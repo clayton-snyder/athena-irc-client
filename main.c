@@ -1,7 +1,7 @@
-#include "context_framework.h"
 #include "log.h"
 #include "msgqueue.h"
 #include "msgutils.h"
+#include "screen_framework.h"
 #include "stringutils.h"
 #include "terminalutils.h"
 
@@ -82,17 +82,17 @@ int main(int argc, char* argv[]) {
     // TODO: placement?
     init_msg_queues();
 
-    // TODO: maybe move to "init_contexts()", possibly in context_mgr
-    msglog_list msglog_home = { 0 }; 
-    msglog_home.max_size_bytes = MSGLOG_DEFAULT_MAX_BYTES;
-    context ctx_home = {
+    // TODO: maybe move to "init_screens()", possibly in screen_mgr
+    screenlog_list screenlog_home = { 0 }; 
+    screenlog_home.max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES;
+    screen scr_home = {
         .type = CONTEXTTYPE_SERVER_HOME,
         .display_text = "Not Connected",
-        .id = get_next_context_id(), 
-        .msglog = msglog_home, 
+        .id = get_next_screen_id(), 
+        .scrlog = screenlog_home, 
         .channel_maybe = NULL
     };
-    log_fmt(LOGLEVEL_SPAM, "[main] Created context: %s", ctx_home.display_text);
+    log_fmt(LOGLEVEL_SPAM, "[main] Created screen: %s", scr_home.display_text);
 
     // Initiate use of WS2_32.dll, requesting version 2.2
     WSADATA wsa_data;
@@ -206,15 +206,20 @@ int main(int argc, char* argv[]) {
 
             if (ircm == NULL) continue;
 
+            // TODO: Continue: First, get all the initial connection server msgs
+            // built and printable, and add them to scr_home. Then maybe create
+            // one additional screen, just to be able to practice switching and 
+            // routing (send PRIVMSG there). After those things, you're ready to
+            // integrate the new UI!!
             // TODO: evaluate what to do with the msg. Pass to handle_servermsg?
             if (strcmp(ircm->command, "PRIVMSG") == 0) {
-                // TODO: call handler. don't print. add to ctx_home.
+                // TODO: call handler. don't print. add to scr_home.
                 bool success = msgutils_buildmsg_privmsg(
                         buf_logmsg, sizeof(buf_logmsg),
                         ircm->source, ircm->params.tail->msg, timestamp_buf);
                 if (success) {
                     printf("%s\n", buf_logmsg);
-                    msglog_pushback_copy(&ctx_home.msglog, buf_logmsg);
+                    screenlog_pushback_copy(&scr_home.scrlog, buf_logmsg);
                 }
             }
             msgutils_ircmsg_free(ircm);
