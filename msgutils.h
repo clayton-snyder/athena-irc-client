@@ -37,8 +37,3 @@ void DEBUG_ircmsg_print(ircmsg *ircm);
 bool msgutils_get_timestamp(
         char *const buf, size_t bufsize, bool utc, timestamp_format format);
 
-bool msgutils_buildmsg_privmsg(char *const buf, size_t bufsize,
-        const_str from, const_str msg, const_str timestamp);
-
-bool msgutils_buildmsg_user(
-        char *const buf, size_t bufsize, const_str raw_msg);

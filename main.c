@@ -1,4 +1,5 @@
 #include "log.h"
+#include "handlers.h"
 #include "msgqueue.h"
 #include "msgutils.h"
 #include "screen_framework.h"
@@ -81,18 +82,6 @@ int main(int argc, char* argv[]) {
     
     // TODO: placement?
     init_msg_queues();
-
-    // TODO: maybe move to "init_screens()", possibly in screen_mgr
-    screenlog_list screenlog_home = { 0 }; 
-    screenlog_home.max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES;
-    screen scr_home = {
-        .type = CONTEXTTYPE_SERVER_HOME,
-        .display_text = "Not Connected",
-        .id = get_next_screen_id(), 
-        .scrlog = screenlog_home, 
-        .channel_maybe = NULL
-    };
-    log_fmt(LOGLEVEL_SPAM, "[main] Created screen: %s", scr_home.display_text);
 
     // Initiate use of WS2_32.dll, requesting version 2.2
     WSADATA wsa_data;
@@ -183,16 +172,13 @@ int main(int argc, char* argv[]) {
     HANDLE h_ui_thread = CreateThread(
             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
-    // 511 bytes for the message + metadata (timestamp, author) + ANSI escapes
-    // for formatting. 1024 is generous, but this gets re-used. 
-    char buf_logmsg[1024] = {0};
     bool bye = false;
     while (!bye) {
         // INCOMING msgs
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
-
+            // TODO: Get all of the initial connection server msgs printable
             char timestamp_buf[20];
             msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
                     TIMESTAMP_FORMAT_TIME_ONLY);
@@ -201,27 +187,12 @@ int main(int argc, char* argv[]) {
                     timestamp_buf, curr_msgnode->msg);
 
             ircmsg *ircm = msgutils_ircmsg_parse(curr_msgnode->msg);
-
             curr_msgnode = curr_msgnode->next;
-
             if (ircm == NULL) continue;
+            
+            handle_ircmsg(ircm, timestamp_buf);
 
-            // TODO: Continue: First, get all the initial connection server msgs
-            // built and printable, and add them to scr_home. Then maybe create
-            // one additional screen, just to be able to practice switching and 
-            // routing (send PRIVMSG there). After those things, you're ready to
-            // integrate the new UI!!
-            // TODO: evaluate what to do with the msg. Pass to handle_servermsg?
-            if (strcmp(ircm->command, "PRIVMSG") == 0) {
-                // TODO: call handler. don't print. add to scr_home.
-                bool success = msgutils_buildmsg_privmsg(
-                        buf_logmsg, sizeof(buf_logmsg),
-                        ircm->source, ircm->params.tail->msg, timestamp_buf);
-                if (success) {
-                    printf("%s\n", buf_logmsg);
-                    screenlog_pushback_copy(&scr_home.scrlog, buf_logmsg);
-                }
-            }
+            
             msgutils_ircmsg_free(ircm);
         }
         msglist_free(&msgs_in);
