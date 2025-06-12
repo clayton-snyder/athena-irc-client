@@ -16,17 +16,19 @@
 // ESC"]12;#FFFFFF"ESC. 
 #define ESC_SEQ_CURSOR_COLOR_MAX_LEN (6 + MAX_COLOR_STR_LEN)
 
-// Writes 'str' to 'buf' if its length is less than 'max'. Does not write the
-// null terminator or consider it in the size. Returns true if the string fits 
-// and was written.
+// Writes 'str' to 'buf', including null term, if strlen(str) is less than
+// 'maxlen'. Returns number of chars written, not including the null term, or 0
+// if 'str' could not be written.
 static size_t write_if_fits(
         char *const buf, size_t maxlen, const char *const str)
 {
-    size_t len = strlen(str);
-    if (len > maxlen || str == NULL) return 0;
+    assert(buf != NULL);
+    assert(str != NULL);
 
-    for (size_t i = 0; i < len; i++)
-        buf[i] = str[i];
+    size_t len = strlen(str);
+    if (len >= maxlen) return 0;
+
+    if (strcpy_s(buf, maxlen, str) != 0) return 0;
 
     return len;
 }
@@ -115,9 +117,9 @@ size_t termutils_set_text_color_256_buf(
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
     // don't call this if you don't have room
-    assert(maxlen >= ESC_SEQ_COLOR_256_MAX_LEN);
+    assert(maxlen > ESC_SEQ_COLOR_256_MAX_LEN);
 #endif
-    if (maxlen < ESC_SEQ_COLOR_256_MAX_LEN) return false;
+    if (maxlen <= ESC_SEQ_COLOR_256_MAX_LEN) return 0;
 
     char seq[ESC_SEQ_COLOR_256_MAX_LEN + 1];
     int len = sprintf_s(seq, sizeof(seq), ESC"[38;5;%dm", color_code);
@@ -125,8 +127,8 @@ size_t termutils_set_text_color_256_buf(
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(len <= ESC_SEQ_COLOR_256_MAX_LEN);
 #endif
-    if (len > (int) maxlen) return false;
-    return write_if_fits(buf, len, seq);
+    if (len > (int) maxlen) return 0;
+    return write_if_fits(buf, maxlen, seq);
 }
 
 size_t termutils_reset_text_color_buf(char *const buf, size_t maxlen) {

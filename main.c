@@ -166,8 +166,6 @@ int main(int argc, char* argv[]) {
             if (ircm == NULL) continue;
             
             handle_ircmsg(ircm, timestamp_buf);
-
-            
             msgutils_ircmsg_free(ircm);
         }
         msglist_free(&msgs_in);
@@ -180,12 +178,11 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            // TODO: fix the exit flow
             bye = handle_user_command(msg, sock);
             if (bye) break;
         }
         msglist_free(&msgs_ui);
-        // Out msgs
+        // TODO: do we still have out msgs??
     }
 
     WaitForSingleObject(h_recv_thread, INFINITE);

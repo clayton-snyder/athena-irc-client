@@ -26,10 +26,13 @@
 #define IRC_MSG_BUF_LEN (MAX_CMD_LEN + 2)
 
 // IRC message handlers
+static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts);
 static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts);
 
 // Screen formatters
 static char s_scrbuf[SCREENMSG_BUF_SIZE] = {0};
+static bool screenfmt_default(char *const buf, size_t bufsize,
+        const_str cmd, const msglist *const params, const_str ts);
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
         const_str from, const_str msg, const_str ts);
 
@@ -48,7 +51,28 @@ static bool try_send_as_irc(SOCKET sock, const char* fmt, ...);
 bool handle_ircmsg(ircmsg *const ircm, const_str ts) {
     if (strcmp(ircm->command, "PRIVMSG") == 0)
         return handle_ircmsg_privmsg(ircm, ts);
-    return false;
+
+    return handle_ircmsg_default(ircm, ts);
+}
+
+static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts) {
+    assert(ircm != NULL);
+    assert(ircm->command != NULL);
+
+    bool success = screenfmt_default(s_scrbuf, sizeof(s_scrbuf), ircm->command,
+            &ircm->params, ts);
+
+
+    if (!success) {
+        log_fmt(LOGLEVEL_ERROR, "[%s] Could not screenfmt default. "
+              "command='%s', param.count=%d, ts='%s'",
+              "handle_ircmsg_default()", ircm->command, ircm->params.count, ts);
+    }
+    else {
+        screen_pushmsg_copy(screen_getid_home(), s_scrbuf);       
+    }
+    
+    return success;
 }
 
 static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
@@ -65,8 +89,8 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
     bool success = screenfmt_privmsg(s_scrbuf, sizeof(s_scrbuf), from, msg, ts);
 
     if (!success) {
-        log_fmt(LOGLEVEL_ERROR, "[%s] Could not screenfmt message. from='%s', "
-                "msg='%s', ts='%s'", "handle_privmsg()", from, to, msg, ts);
+        log_fmt(LOGLEVEL_ERROR, "[%s] Could not screenfmt privmsg. from='%s', "
+             "msg='%s', ts='%s'", "handle_ircmsg_privmsg()", from, to, msg, ts);
     }
     else {
         // TODO: Actually you need to find the appropriate screen based on the
@@ -82,6 +106,46 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
 
 /*****************************************************************************/
 /************************** SCREEN FORMAT IMPLs ******************************/
+
+static bool screenfmt_default(char *const buf, size_t bufsize,
+        const_str cmd, const msglist *const params, const_str ts)
+{
+    size_t n_bytes = 0;
+    n_bytes += termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_BLUE);
+
+    int bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "[%s] ", ts);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+    
+    n_bytes += termutils_set_text_color_buf(buf + n_bytes, bufsize - n_bytes, 
+            TERMUTILS_COLOR_MAGENTA);
+    if (n_bytes >= bufsize) return false;
+
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "SERVER SAYS: ");
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+
+    bytes = termutils_set_text_color_256_buf(
+            buf + n_bytes, bufsize - n_bytes, 245);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+    if (n_bytes >= bufsize) return false;
+
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "(%s)", cmd);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+
+    struct msgnode *curr = params->head;
+    while (curr != NULL) {
+        bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, " %s", curr->msg);
+        if (bytes < 0) return false;
+        n_bytes += bytes;
+        curr = curr->next;
+    }
+
+    n_bytes += termutils_reset_text_color_buf(buf + n_bytes, bufsize - n_bytes);
+    return n_bytes <= bufsize;
+}
 
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
         const_str from, const_str msg, const_str ts)
@@ -128,7 +192,7 @@ static bool screenfmt_privmsg(char *const buf, size_t bufsize,
 bool handle_user_command(char *msg, SOCKET sock) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
-    log_fmt(LOGLEVEL_DEV, "[handle_local_command] Processing '%s'", msg);
+    log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
     
     if (strcmp(msg, "BYE") == 0) return true;
 
