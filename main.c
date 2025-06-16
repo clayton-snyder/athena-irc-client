@@ -149,15 +149,15 @@ int main(int argc, char* argv[]) {
 
     bool bye = false;
     while (!bye) {
+        char timestamp_buf[20];
+        msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
+                TIMESTAMP_FORMAT_TIME_ONLY);
+
         // INCOMING msgs
         msglist msgs_in = msg_queue_takeall(QUEUE_IN);
         struct msgnode *curr_msgnode = msgs_in.head;
         while (curr_msgnode != NULL) {
             // TODO: Get all of the initial connection server msgs printable
-            char timestamp_buf[20];
-            msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
-                    TIMESTAMP_FORMAT_TIME_ONLY);
-
             log_fmt(LOGLEVEL_DEV, "[main] [%s] SERVER SAYS: \"%s\"",
                     timestamp_buf, curr_msgnode->msg);
 
@@ -178,7 +178,7 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            bye = handle_user_command(msg, sock);
+            bye = handle_user_command(msg, sock, timestamp_buf);
             if (bye) break;
         }
         msglist_free(&msgs_ui);

@@ -183,13 +183,29 @@ static bool screenfmt_privmsg(char *const buf, size_t bufsize,
     return true;
 }
 
+static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
+        const_str error_msg, const_str from, const_str msg, const_str ts)
+{
+    size_t n_bytes = 
+        termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_RED);
+    int bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "(%s) ", error_msg);
+    if (bytes < 0) return false;
+    n_bytes += bytes;
+
+    n_bytes += termutils_set_text_color_256_buf(buf, bufsize, 245);
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "[%s] <%s> %s",
+            ts, from, msg);
+    if (bytes < 0) return false;
+
+    return true;
+}
 
 
 /*****************************************************************************/
 /************************* LOCALCMD HANDLER IMPLs ****************************/
 
 // Returns true if program should exit.
-bool handle_user_command(char *msg, SOCKET sock) {
+bool handle_user_command(char *msg, SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
@@ -198,11 +214,13 @@ bool handle_user_command(char *msg, SOCKET sock) {
 
     switch (msg[0]) {
     case '!':
+        // TODO: Do we want to send this to a screenlog?
         // ! indicates an internal client command.
         if (strut_startswith(msg, "!channel ") || strcmp(msg, "!channel") == 0)
             handle_localcmd_channel(msg, sock);
         break;
     case '`':
+        // TODO: Do we want to send this to a screenlog?
         // ` is for sending the message to the server unmodified.
         try_send_as_irc(sock, (msg + 1));
         break;
@@ -213,7 +231,32 @@ bool handle_user_command(char *msg, SOCKET sock) {
         // (e.g., user enters a number and we select the channel name and try
         // to JOIN it).
         // if active_screen is a CHANNEL...
-        try_send_as_irc(sock, "PRIVMSG %s :%s", "#codetest", msg);
+        // TODO: send to active_screen screenlog
+        
+        bool send_success =
+            try_send_as_irc(sock, "PRIVMSG %s :%s", "#codetest", msg);
+        
+        bool fmt_success = false;
+        if (send_success)
+            fmt_success = screenfmt_privmsg(s_scrbuf, sizeof(s_scrbuf),
+                                "REPLACEME", msg, ts);
+        else
+            fmt_success = screenfmt_privmsg_error(s_scrbuf, sizeof(s_scrbuf),
+                                "Not Sent", "REPLACEME", msg, ts);
+
+        if (!fmt_success) {
+            log_fmt(LOGLEVEL_ERROR, "[%s] Couldn't screenfmt privmsg. "
+                    "from='%s', msg='%s', ts='%s'", "handle_ircmsg_privmsg()",
+                    "REPLACEME", msg, ts);
+            // TODO: Review this behavior. DEV only? Also send to right screen,
+            // not just active
+            screen_pushmsg_copy(screen_getid_active(), "<corrupted message>");
+        }
+        else {
+            // TODO: Actually you need to find the appropriate screen based on
+            // the source or "to" param. Probably need a screen_search option.
+            screen_pushmsg_copy(screen_getid_active(), s_scrbuf);       
+        }
         // else if active_screen is a CHANNEL_LIST...
 
     }
