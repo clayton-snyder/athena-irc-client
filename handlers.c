@@ -210,7 +210,11 @@ bool handle_user_command(char *msg, SOCKET sock, const_str ts) {
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
     
-    if (strcmp(msg, "BYE") == 0) return true;
+    if (strcmp(msg, "BYE") == 0) {
+        try_send_as_irc(sock, "QUIT");
+        screen_pushmsg_copy(screen_getid_active(), "Disconnecting...");
+        return true;
+    }
 
     switch (msg[0]) {
     case '!':

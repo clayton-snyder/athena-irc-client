@@ -19,9 +19,35 @@
 // they need to reduce their message by as long as we can read it all.
 #define INPUT_BUFF_LEN 1024 * 4
 
+// Needs to be large enough to hold all displayed characters plus all formatting
+// data from ANSI escape codes. The screen buff is re-used so there's little 
+// downside to severely overestimating this.
+// 512 columns, 128 rows, doubled for formatting space = 131kb
+// If you are displaying more text than that on a single screen, seek help.
+#define SCREEN_BUFF_SIZE 512 * 128 * 2
+
+// The status line is a single line across the top of the screen. Same logic as
+// screen buf on the size, but only for one line.
+#define STATLINE_BUFF_SIZE 512 * 2
+
+// Longest timestamp we'll write is: YYYY-MM-DD HH:MM:SS + \0.
+// Usually it will just be the time, though.
+#define TIMESTAMP_BUFF_SIZE 20
+
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
+
+// Reads keyboard and mouse input from the provided input source and writes into
+// the active screen's UI state.
+static bool process_console_input(HANDLE h_stdin);
+
+// Orchestrates the drawing of the entire UI, including the active screen's
+// log w/ scroll, input buffer, the global status status bar, etc., all within
+// the current terminal width/height.
+static void draw_screen(HANDLE h_stdout,
+        char *screenbuf, size_t screenbuf_size,
+        char *statbuf, size_t statbuf_size);
 
 
 int main(int argc, char* argv[]) {
@@ -141,15 +167,44 @@ int main(int argc, char* argv[]) {
         log_fmt(LOGLEVEL_DEV, "[main] Sent: %s", send_buff[i]);
     }
 
-    DWORD recv_thread_id = 0, ui_thread_id = 0;
+    DWORD recv_thread_id = 0; //, ui_thread_id = 0;
     HANDLE h_recv_thread = CreateThread(
             NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
-    HANDLE h_ui_thread = CreateThread(
-            NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
+//     HANDLE h_ui_thread = CreateThread(
+//             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
+
+    // Use alternative screen buffer
+    printf("\033[?1049h");
+
+    HANDLE h_stdin = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE h_stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h_stdin == INVALID_HANDLE_VALUE || h_stdout == INVALID_HANDLE_VALUE) {
+        printf("Invalid std handle\n");
+        return 23;
+    }
+
+    DWORD prev_mode;
+    if (!GetConsoleMode(h_stdin, &prev_mode)) {
+        printf("GetConsoleMode() failed\n");
+        return 23;
+    }
+
+    // Quick Edit mode seems to interfere with mouse input; before diabling it,
+    // scroll events were coming in as key events for up/down arrow.
+    // Note that ENABLE_EXTENDED_FLAGS must be enabled to disable Quick Edit.
+	DWORD new_mode = (ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS) &
+                     ~(ENABLE_QUICK_EDIT_MODE);
+    if (!SetConsoleMode(h_stdin, new_mode)) {
+        printf("SetConsoleMode failed\n");
+        return 23;
+    }
 
     bool bye = false;
+    char drawbuf_screen[SCREEN_BUFF_SIZE] = { 0 };
+    char drawbuf_statline[STATLINE_BUFF_SIZE] = { 0 };
+
     while (!bye) {
-        char timestamp_buf[20];
+        char timestamp_buf[TIMESTAMP_BUFF_SIZE];
         msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
                 TIMESTAMP_FORMAT_TIME_ONLY);
 
@@ -183,84 +238,127 @@ int main(int argc, char* argv[]) {
         }
         msglist_free(&msgs_ui);
         // TODO: do we still have out msgs??
+
+        // Update the UI
+        // TODO: read bool and exit if appropriate
+        process_console_input(h_stdin);
+
+        draw_screen(h_stdout,
+                drawbuf_screen, sizeof(drawbuf_screen),
+                drawbuf_statline, sizeof(drawbuf_statline));
+
     }
 
     WaitForSingleObject(h_recv_thread, INFINITE);
-    WaitForSingleObject(h_ui_thread, INFINITE);
+//     WaitForSingleObject(h_ui_thread, INFINITE);
 
+    printf("\033[0m"); // Reset all formatting modes
+    printf("\033[2J"); // Clear entire screen
+    printf("\033[?1049l"); // Return from alternative screen buffer
+
+    if (!SetConsoleMode(h_stdin, prev_mode))
+        printf("SetConsoleMode(): Failed to reset to old console mode.\n");
 
     closesocket(sock);
     WSACleanup();
 
+
     return 0;
 }
+// TODO: platform-specific code
+static bool process_console_input(HANDLE h_stdin) {
+    bool user_quit = false;
+    screen_ui_state *const st = screen_get_active_ui_state();
+    assert(st != NULL);
 
+    // ReadConsoleInput blocks until it reads at least one input event, so we 
+    // need to avoid calling it when there's nothing to read.
+    if (WaitForSingleObject(h_stdin, 0) != WAIT_OBJECT_0) return false;
 
-DWORD WINAPI thread_main_ui(LPVOID data) {
-    UNREFERENCED_PARAMETER(data);
-    // TODO: This function should be refactored to use a string reading function
-    // that mallocs to tolerate any user input size so we can always tell the
-    // user how much smaller their message needs to be and to avoid an
-    // unnecessary string copy. `getline()` does this, but Windows doesn't have
-    // that, so I need to write it myself. For now we use a really huge buffer
-    // and admonish the user if they exceed it.
-    msglist msgs = { .head = NULL, .tail = NULL, .count = 0 };
-    char ui_buff[INPUT_BUFF_LEN];
+    // TODO: make irbuf size constant
+    static INPUT_RECORD irbuf[128];
+    DWORD n_events = 0;
+    ReadConsoleInput(h_stdin, irbuf, 128, &n_events);
+    for (DWORD i = 0; i < n_events; i++) {
+        if (irbuf[i].EventType == MOUSE_EVENT) {
+            MOUSE_EVENT_RECORD m = irbuf[i].Event.MouseEvent;
+            // Process the mouse event
+            if (!(m.dwEventFlags & MOUSE_WHEELED)) continue;
 
-    bool bye = false;
-    while (!bye) {
-        char *str = fgets(ui_buff, sizeof(ui_buff), stdin);
-        size_t str_len = strlen(str);
-        log_fmt(LOGLEVEL_DEV, "[thread_main_ui] fgets(): str_len=%d", str_len);
-        
-        if (str == NULL) {
-            log_fmt(LOGLEVEL_ERROR, "[thread_main_ui] fgets() gave NULL str. "
-                    "ferror(stdin): %d", ferror(stdin));
-            // TODO: communicate failure
+            bool is_hiword_negative = HIWORD(m.dwButtonState) & 1<<15;
+
+            if (is_hiword_negative) {
+                st->scroll--;
+                if (st->scroll < 0) st->scroll = 0;
+            } else {
+                if (!st->scroll_at_top) st->scroll++;
+            }
+
             continue;
         }
 
-        // TODO: certainly this can be refactored.
-        if (ui_buff[str_len - 1] != '\n') {
-            if (str_len < INPUT_BUFF_LEN - 1) {
-                log_fmt(LOGLEVEL_ERROR,
-                        "[thread_main_ui] End of string is not \\n, but buff "
-                        "was not filled. Because input is stdin, this is "
-                        "unexpected. str_len=%d, INPUT_BUFF_LEN=%d, "
-                        "sizeof(ui_buff)=%d, str='%s'", str_len, INPUT_BUFF_LEN,
-                        sizeof(ui_buff), str);
-                // TODO: communicate failure
-                continue;
-            }
-            //TODO:output
-            termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-            termutils_set_bold(true);
-            printf("You have *far* exceeded the allowable message length. "
-                    "Enter a message shorter than %d characters and I can tell "
-                    "you specifically how much smaller your message must be.\n",
-                    sizeof(ui_buff));
-            termutils_reset_all();
+        if (irbuf[i].EventType != KEY_EVENT) continue;
+
+        KEY_EVENT_RECORD k = irbuf[i].Event.KeyEvent;
+        if (!k.bKeyDown) continue;
+        if (k.wVirtualKeyCode == VK_BACK && st->i_inputbuf > 0)
+            st->inputbuf[--st->i_inputbuf] = '\0';
+        if (k.wVirtualKeyCode == VK_ESCAPE)
+            user_quit = true; // don't break; we want to reset the colors
+        if (k.wVirtualKeyCode == VK_RETURN && st->i_inputbuf > 0) {
+            msgqueue_pushback_copy(QUEUE_UI, st->inputbuf);
+
+            while (st->i_inputbuf > 0)
+                st->inputbuf[st->i_inputbuf--] = '\0';
+
+            assert(st->i_inputbuf == 0);
+            st->inputbuf[st->i_inputbuf] = '\0';
         }
-
-        // fgets() should include the delimiting \n in the buffer...
-        assert(ui_buff[str_len - 1] == '\n');
-        ui_buff[--str_len] = '\0'; // ... and we don't want it.
-
-        if (strcmp(str, "BYE") == 0) {
-            log(LOGLEVEL_INFO, "[thread_main_ui] received BYE command. BYE!\n");
-            bye = true;
-            // TODO: output
+        else if (k.uChar.AsciiChar > 31 &&
+                 st->i_inputbuf < sizeof(st->inputbuf) - 1)
+        {
+            st->inputbuf[st->i_inputbuf++] = k.uChar.AsciiChar;
         }
-        log_fmt(LOGLEVEL_DEV, "[thread_main_ui] submitting: \"%s\"", str);
-
-        // TODO: this can change to msglist_pushback_take when we impl getline()
-        msglist_pushback_copy(&msgs, str);
-        msglist_submit(QUEUE_UI, &msgs);
-        msgs.head = msgs.tail = NULL;
-        msgs.count = 0;
     }
 
-    return 0;
+    return user_quit;
+}
+
+static void draw_screen(HANDLE h_stdout,
+        char *screenbuf, size_t screenbuf_size,
+        char *statbuf, size_t statbuf_size)
+{
+    screen_ui_state *const st = screen_get_active_ui_state();
+    assert(st != NULL);
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(h_stdout, &csbi);
+
+    int term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    int term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+
+    int stats_len = sprintf_s(statbuf, statbuf_size,
+            "%dx%d  scr:%d",
+            term_rows, term_cols, st->scroll);
+
+    int rows_statline = stats_len / term_cols + 1;
+    int rows_uiline = (strlen(st->prompt) + st->i_inputbuf - 1) / term_cols + 1;
+    int rows_screenbuf = term_rows - (rows_statline + rows_uiline);
+
+    screen_fmt_to_buf(screenbuf, screenbuf_size, rows_screenbuf, term_cols);
+
+    printf("\033 7" // Save cursor position
+            "\033[0m\033[2J" // Reset colors, erase screen
+            "\033[H\033[48;5;252m\033[2K" // Draw statline bg, lgray, top 
+            "\033[38;5;233m%s" // Draw statline text, dark gray
+            "\033[0m\033[1E%s" // Reset color, print buffer next line
+            "\033[%d;0H\033[48;5;27m\033[2K" // Draw input line blue bg
+            "\033[38;5;190m%s" // Draw prompt, yellow
+            "\033[38;5;15m%s" // Draw uibuf, white
+            "\033[0m" // Reset colors
+            "\033 8", // Restore cursor position
+            statbuf, screenbuf, term_rows - (rows_uiline - 1),
+            st->prompt, st->inputbuf);
 }
 
 DWORD WINAPI thread_main_recv(LPVOID data) {

@@ -24,6 +24,8 @@
 // thing, processing each message accordingly, then pass it to msglist_free().
 #pragma once
 
+#include "athena_types.h"
+
 #include <stddef.h>
 
 struct msgnode {
@@ -39,6 +41,13 @@ typedef struct msglist {
 
 typedef enum { QUEUE_IN, QUEUE_OUT, QUEUE_UI } msg_queue_id;
 
+// Add a single message to the end of the specified queue. NOTE: Don't use this
+// if you have multiple messages to add; each call to this function incurs a
+// mutex lock and release. Instead, build a msglist containing all of your
+// messages and submit it with msglist_submit(), thus triggering only one mutex
+// lock/release for your whole group of messages.
+void msgqueue_pushback_copy(msg_queue_id, const_str msg);
+
 // Add message to the end of the provided list. `msg` must be a null-terminated
 // string, and the msgnode takes ownership of the allocated string; i.e., you
 // should NOT free it yourself, and you should NOT pass a stack allocated
@@ -49,7 +58,7 @@ void msglist_pushback_take(msglist *list, char *msg);
 // string, and it will be copied into the appended list entry, so it's safe to
 // pass stack allocated strings. Do not pass heap allocated strings unless you
 // plan to free them yourself; see `msglist_pushback_take()`.
-void msglist_pushback_copy(msglist *list, const char *msg);
+void msglist_pushback_copy(msglist *list, const_str msg);
 
 // Must be called prior to using any msg_queue-related functionality.
 void init_msg_queues(void);

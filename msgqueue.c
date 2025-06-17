@@ -34,6 +34,26 @@ void init_msg_queues(void) {
     b_initialized = true;
 }
 
+void msgqueue_pushback_copy(msg_queue_id queue_id, const_str msg) {
+    size_t msg_size = strlen(msg) + 1;
+
+    struct msgnode *node = (struct msgnode*) malloc(sizeof(struct msgnode));
+    char *msgcpy = (char*) malloc(msg_size);
+    if (node == NULL || msgcpy == NULL) {
+        // TODO: communicate fatal error
+        log(LOGLEVEL_ERROR, "[msgqueue_pushback_copy()] FATAL: out of memory.");
+        exit(23);
+    }
+
+    strcpy_s(msgcpy, msg_size, msg);
+    node->msg = msgcpy;
+    node->next = NULL;
+
+    msglist list = { .head = node, .tail = node, .count = 1 };
+
+    msglist_submit(queue_id, &list);
+}
+
 void msglist_pushback_take(msglist *list, char* msg) {
     assert(msg != NULL);
     DEBUG_assert_msglist_valid(list);
@@ -63,7 +83,7 @@ void msglist_pushback_copy(msglist *list, const char* msg) {
     assert(msg != NULL);
     DEBUG_assert_msglist_valid(list);
 
-    rsize_t msg_size = strlen(msg) + 1;
+    size_t msg_size = strlen(msg) + 1;
     struct msgnode *node = (struct msgnode*) malloc(sizeof(struct msgnode));
     char *msgcpy = (char*) malloc(msg_size);
     if (node == NULL || msgcpy == NULL) {

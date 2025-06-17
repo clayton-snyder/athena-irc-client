@@ -10,6 +10,9 @@
 #define SCREEN_ID_HOME 0
 #define SCREEN_DISPLAY_TEXT_MAXLEN 1024
 
+// ANSI escape character used to signal the beginning of a formatting sequence.
+#define ESC "\033"
+
 // This is just a string holder. Timestamp, author info, formatting, etc. should
 // all be interpolated into the string already. 'msg' will be copied directly 
 // into the screen buffer.
@@ -56,6 +59,7 @@ typedef struct screen {
     char display_text[SCREEN_DISPLAY_TEXT_MAXLEN];
     screen_id id;
     screenlog_list scrlog;
+    screen_ui_state ui_state;
     // NULL if type is not SCREENTYPE_CHANNEL
     channel *channel_maybe;
 } screen;
@@ -68,11 +72,23 @@ static screen_id screen_id_counter = SCREEN_ID_HOME + 1;
 // manually assign screen IDs!
 static screen_id get_next_screen_id(void);
 
+// Utility functions for formatting a scrlog to a rowsXcols screen.
+static size_t calc_screen_offset(const char *msg, size_t rows, size_t cols);
+static int num_lines(char *msg, int cols);
+static size_t strlen_on_screen(const char *msg);
+
 static screen s_scr_home = {
     .type = SCREENTYPE_HOME,
     .display_text = {"Not Connected"},
     .id = SCREEN_ID_HOME,
     .scrlog = { .max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES },
+    .ui_state = {
+        .prompt = "> ",
+        .inputbuf = {0}, 
+        .i_inputbuf = 0,
+        .scroll = 0,
+        .scroll_at_top = true
+    },
     .channel_maybe = NULL
 };
 
@@ -96,6 +112,7 @@ static void screenlog_push_take(screenlog_list *const scrlog, char *const msg);
 // list to free at least the specified number of bytes.
 static void screenlog_evict_min_to_free(
         screenlog_list *const scrlog, int free_bytes);
+
 
 
 /*****************************************************************************/
@@ -303,6 +320,10 @@ screen_id screen_getid_active(void) {
     return s_scr_active->id;
 }
 
+screen_ui_state *const screen_get_active_ui_state(void) {
+    return &s_scr_active->ui_state;
+}
+
 // bool screen_set_active(screen_id scrid) {
 //     // Look up scrid in array.
 //     // If active, return true
@@ -322,3 +343,194 @@ void screen_pushmsg_take(screen_id scrid, char *const msg) {
     // TODO: look up the screen first!
     screenlog_push_take(&s_scr_active->scrlog, msg);
 }
+
+int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
+    assert(buf != NULL);
+    assert(s_scr_active != NULL);
+    // TODO: do we actually want to assert rows/cols > 0?
+    assert(buf_rows > 0);
+    assert(term_cols > 0);
+
+    screenlog_list list = s_scr_active->scrlog;
+    if (list.head == NULL) {
+        assert(list.tail == NULL);
+        return 0;
+    }
+
+    screen_ui_state *const st = &s_scr_active->ui_state;
+    assert(st != NULL);
+
+    int rows_skipped = 0;
+    size_t msg_offset_start = 0;
+    screenlog_node *curr_node = list.tail;
+    while (rows_skipped < st->scroll && curr_node != NULL) {
+        rows_skipped += num_lines(curr_node->msg, term_cols);
+        curr_node = curr_node->prev;
+    }
+    // Account for the partial message we'll write at the end, if one fits.
+    int rows_used = rows_skipped - st->scroll;
+    while (curr_node != NULL && rows_used < buf_rows) {
+        assert(curr_node != NULL);
+        assert(curr_node->msg != NULL);
+        int msg_rows = num_lines(curr_node->msg, term_cols);
+
+        if (rows_used + msg_rows <= buf_rows) {
+            rows_used += msg_rows;
+            // ONLY go to the previous message if there are rows left
+            if (rows_used < buf_rows) curr_node = curr_node->prev;
+            continue;
+        }
+
+        int rows_left = buf_rows - rows_used;
+        // TODO: For newlines, you would start at 0 and count forward, checking
+        // the string, and incrementing "rows_skipped" every 80 chars OR on a 
+        // newline encountered (resetting chars counter) until "rows_skipped" is
+        // equal to (msg_rows - rows_left). then you're left with proper offset.
+        //msg_offset_start = term_cols * (msg_rows - rows_left);
+        msg_offset_start = 
+            calc_screen_offset(curr_node->msg, msg_rows - rows_left, term_cols);
+        rows_used += rows_left;
+        assert(rows_used == buf_rows);
+        // Keep curr_node in place because we start from there
+    }
+
+    // I know it's weird. Need the second condition for g_scroll_at_top and this
+    // is cleaner than an extra if block.
+    if (curr_node == NULL || curr_node == list.head) {
+        curr_node = list.head;
+        st->scroll_at_top = true;
+    }
+    else st->scroll_at_top = false;
+
+    size_t i_buf = rows_used = 0;
+    // Start by writing only from the offset.
+    assert(msg_offset_start < strlen(curr_node->msg));
+    char *msg = curr_node->msg;
+    size_t i_msg = msg_offset_start;
+
+    // We're going to replace newlines in msgs for now (so we can see if the
+    // server sends many and if we need to keep them. Probably should.)
+    // We also write newlines instead of null terms (except the final one) since
+    // the buffer will be printed as one string.
+    int rows_filled_in_buf = num_lines(&msg[i_msg], term_cols);
+    while (msg[i_msg] != '\0')
+        if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
+    buf[i_buf++] = '\n';
+    curr_node = curr_node->next;
+    while (curr_node != NULL && rows_filled_in_buf < buf_rows) {
+        // We should never have a display buffer too small to hold the highest
+        // possible number of characters that could appear on the screen.
+        assert(i_buf + strlen(curr_node->msg) < buflen);
+        msg = curr_node->msg;
+        int msg_rows = num_lines(msg, term_cols);
+        i_msg = 0;
+        if (rows_filled_in_buf + msg_rows > buf_rows) {
+            //size_t msg_offset_end = term_cols * (buf_rows - rows_filled_in_buf);
+            size_t msg_offset_end = calc_screen_offset(
+                    msg, buf_rows - rows_filled_in_buf, term_cols);
+
+            while (i_msg < msg_offset_end && msg[i_msg] != '\0') 
+                if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
+
+            buf[i_buf++] = '\0'; // This is the last message
+
+            rows_filled_in_buf += 
+                i_msg / term_cols + (i_msg % term_cols == 0 ? 0 : 1);
+            assert(rows_filled_in_buf == buf_rows);
+            continue;
+        }
+
+        while (msg[i_msg] != '\0') 
+            if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
+        
+        buf[i_buf++] = '\n';
+        rows_filled_in_buf += msg_rows;
+        curr_node = curr_node->next;
+    }
+    // We don't want the last newline; nothing will print there, but it will
+    // take up a line in the screen buffer
+    buf[i_buf - 1] = '\0';
+
+    // Don't accrue scroll when it's not doing anything.
+    if (rows_filled_in_buf < buf_rows) st->scroll = 0;
+
+    return rows_filled_in_buf;
+}
+
+
+
+/*****************************************************************************/
+/******************************* INTERNAL UTIL *******************************/
+
+static int num_lines(char *msg, int cols) {
+    size_t len = strlen_on_screen(msg);
+    return len / cols + (len % cols == 0 ? 0 : 1);
+}
+
+static size_t calc_screen_offset(const char *msg, size_t rows, size_t cols) {
+    size_t msglen = strlen(msg);
+
+    assert(msg != NULL);
+    assert(msglen > rows * cols);
+
+    // Offset is rows * cols plus all chars in each ANSI escape seq.
+    size_t offset = rows * cols;
+    size_t i = 0, printchars = 0;
+    while (printchars < rows * cols) {
+        assert(i < msglen);
+        assert(msg[i] != '\0');
+        assert(msg[i] != '\n');
+
+        // If we reach the end of the string before finding enough printable 
+        // chars, in theory it means the offset is 0 (whole string fits). In
+        // practice, it probably means a string with an unterminated ANSI escape
+        // sequence. Print it all so it can't hide.
+        // (This is all assuming asserts are turned off).
+        if (i >= msglen) return 0;
+
+        // Redundant, but the specificity of the earlier asserts is handy.
+        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
+        if (msg[i] == ESC[0]) {
+            while (msg[i] != 'm') {
+                offset++;
+                i++;
+                assert(msg[i] >= ' ');
+                assert(i < msglen);
+                // See earlier comment on this return case; this probably means
+                // a bad string, so don't let it hide.
+                if (i >= msglen) return 0;
+            }
+            offset++;
+        } else printchars++; 
+        i++;
+    }
+    return offset;
+}
+
+// This impl has tons of asserts because it's difficult to really validate the
+// ANSI escape sequences. Someone could send an unterminatd ANSI escape and blow
+// the whole thing up, so I'm aggressively flagging those.
+static size_t strlen_on_screen(const char *msg) {
+    size_t msglen = strlen(msg);
+    size_t on_screen_len = 0;
+    for (size_t i = 0; i < msglen; i++) {
+        assert(msg[i] != '\n');
+        // Redundant, but the specificity of the newline assert is handy.
+        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
+
+        // Fast-forward through ANSI escapes
+        if (msg[i] == ESC[0]) {
+            while (msg[i++] != 'm' && i < msglen) {
+                assert(msg[i] != '\0');
+                assert(msg[i] != '\n');
+                // Redundant, but the specificity of the above two is handy.
+                assert(msg[i] >= ' ');
+                assert(i < msglen);
+            }
+        }
+        if (msg[i] != '\0') on_screen_len++;
+    }
+
+    return on_screen_len;
+}
+
