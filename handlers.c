@@ -7,6 +7,7 @@
 #include "terminalutils.h"
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -34,7 +35,7 @@ static char s_scrbuf[SCREENMSG_BUF_SIZE] = {0};
 static bool screenfmt_default(char *const buf, size_t bufsize,
        const_str src, const_str cmd, const msglist *const params, const_str ts);
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
-       const_str from, const_str msg, const_str ts);
+       const_str from, const_str msg, const_str ts, bool self);
 
 // Local command handlers
 static void handle_localcmd_channel(char *msg, SOCKET sock);
@@ -44,6 +45,15 @@ static int send_as_irc(SOCKET sock, const char* msg);
 static bool try_send_as_irc(SOCKET sock, const char* fmt, ...);
 
 
+static termutils_color s_color_ts = TERMUTILS_COLOR_BLUE;
+static termutils_color s_color_namebrackets = TERMUTILS_COLOR_DEFAULT;
+static termutils_color s_color_text_user = TERMUTILS_COLOR_DEFAULT;
+static termutils_color s_color_name_self = TERMUTILS_COLOR_CYAN_BRIGHT;
+static termutils_color s_color_name_user = TERMUTILS_COLOR_YELLOW;
+// static termutils_color s_color_name_op = TERMUTILS_COLOR_RED;
+static termutils_color s_color_name_server = TERMUTILS_COLOR_MAGENTA;
+
+static int s_color256_text_server = 245;
 
 /*****************************************************************************/
 /************************** IRCMSG HANDLER IMPLs *****************************/
@@ -86,7 +96,8 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
     const_str to = ircm->params.head->msg;
     const_str msg = ircm->params.tail->msg;
 
-    bool success = screenfmt_privmsg(s_scrbuf, sizeof(s_scrbuf), from, msg, ts);
+    bool success = screenfmt_privmsg(
+            s_scrbuf, sizeof(s_scrbuf), from, msg, ts, false);
 
     if (!success) {
         log_fmt(LOGLEVEL_ERROR, "[%s] Could not screenfmt privmsg. from='%s', "
@@ -111,22 +122,21 @@ static bool screenfmt_default(char *const buf, size_t bufsize,
         const_str src, const_str cmd, const msglist *const params, const_str ts)
 {
     size_t n_bytes = 0;
-    n_bytes += termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_BLUE);
+    n_bytes += termutils_set_text_color_buf(buf, bufsize, s_color_ts);
 
     int bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "[%s] ", ts);
     if (bytes < 0) return false;
     n_bytes += bytes;
     
-    n_bytes += termutils_set_text_color_buf(buf + n_bytes, bufsize - n_bytes, 
-            TERMUTILS_COLOR_MAGENTA);
+    n_bytes += termutils_set_text_color_buf(
+            buf + n_bytes, bufsize - n_bytes, s_color_name_server);
     if (n_bytes >= bufsize) return false;
-
     bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "%s: ", src);
     if (bytes < 0) return false;
     n_bytes += bytes;
 
     bytes = termutils_set_text_color_256_buf(
-            buf + n_bytes, bufsize - n_bytes, 245);
+            buf + n_bytes, bufsize - n_bytes, s_color256_text_server);
     if (bytes < 0) return false;
     n_bytes += bytes;
     if (n_bytes >= bufsize) return false;
@@ -148,39 +158,46 @@ static bool screenfmt_default(char *const buf, size_t bufsize,
 }
 
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
-        const_str from, const_str msg, const_str ts)
+        const_str from, const_str msg, const_str ts, bool self)
 {
+    termutils_color color_name = self ? s_color_name_self : s_color_name_user;
     // The size checking is strange here, but avoids a massive function. Since
     // the termutils functions and sprintf_s() won't write anything that can't
     // fit, we can plow through those and only check n_bytes before we write a
     // character manually. We avoid adding -1 (from sprintf_s() failure) to
     // n_bytes by simply returning false if we ever see it.
     size_t n_bytes = 0;
-    n_bytes += termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_BLUE);
+    n_bytes += termutils_set_text_color_buf(buf, bufsize, s_color_ts);
 
     int bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "[%s] ", ts);
     if (bytes < 0) return false;
     n_bytes += bytes;
     
-    n_bytes += termutils_set_text_color_buf(buf + n_bytes, bufsize - n_bytes, 
-            TERMUTILS_COLOR_YELLOW);
+    n_bytes += termutils_set_text_color_buf(
+            buf + n_bytes, bufsize - n_bytes, s_color_namebrackets);
     if (n_bytes >= bufsize) return false;
     buf[n_bytes++] = '<';
 
-    n_bytes += termutils_set_bold_buf(buf + n_bytes, bufsize - n_bytes, true);
+    n_bytes += termutils_set_bold_buf(buf + n_bytes, bufsize - n_bytes, self);
+    n_bytes += termutils_set_text_color_buf(
+            buf + n_bytes, bufsize - n_bytes, color_name);
     bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "%s", from);
     if (bytes < 0) return false;
     n_bytes += bytes;
 
     n_bytes += termutils_set_bold_buf(buf + n_bytes, bufsize - n_bytes, false);
+    n_bytes += termutils_set_text_color_buf(
+            buf + n_bytes, bufsize - n_bytes, s_color_namebrackets);
     if (n_bytes >= bufsize) return false;
     buf[n_bytes++] = '>';
-    n_bytes += termutils_reset_text_color_buf(buf + n_bytes, bufsize - n_bytes);
-
+    n_bytes += termutils_set_text_color_buf(
+            buf + n_bytes, bufsize - n_bytes, s_color_text_user);
     bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, " %s", msg);
     if (bytes < 0) return false;
+    n_bytes += bytes;
+    n_bytes += termutils_reset_text_color_buf(buf + n_bytes, bufsize - n_bytes);
 
-    return true;
+    return n_bytes <= bufsize;
 }
 
 static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
@@ -243,7 +260,7 @@ bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
         bool fmt_success = false;
         if (send_success)
             fmt_success = screenfmt_privmsg(s_scrbuf, sizeof(s_scrbuf),
-                                nick, msg, ts);
+                                nick, msg, ts, true);
         else
             fmt_success = screenfmt_privmsg_error(s_scrbuf, sizeof(s_scrbuf),
                                 "Not Sent", nick, msg, ts);
