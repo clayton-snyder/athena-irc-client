@@ -510,7 +510,7 @@ static size_t strlen_on_screen(const char *msg) {
         assert(msg[i] >= ' ' || msg[i] == ESC[0]);
 
         // Fast-forward through ANSI escapes
-        if (msg[i] == ESC[0]) {
+        while (msg[i] == ESC[0]) {
             while (msg[i++] != 'm' && i < msglen) {
                 assert(msg[i] != '\0');
                 assert(msg[i] != '\n');
