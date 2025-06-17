@@ -32,9 +32,9 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts);
 // Screen formatters
 static char s_scrbuf[SCREENMSG_BUF_SIZE] = {0};
 static bool screenfmt_default(char *const buf, size_t bufsize,
-        const_str cmd, const msglist *const params, const_str ts);
+       const_str src, const_str cmd, const msglist *const params, const_str ts);
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
-        const_str from, const_str msg, const_str ts);
+       const_str from, const_str msg, const_str ts);
 
 // Local command handlers
 static void handle_localcmd_channel(char *msg, SOCKET sock);
@@ -59,8 +59,8 @@ static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts) {
     assert(ircm != NULL);
     assert(ircm->command != NULL);
 
-    bool success = screenfmt_default(s_scrbuf, sizeof(s_scrbuf), ircm->command,
-            &ircm->params, ts);
+    bool success = screenfmt_default(s_scrbuf, sizeof(s_scrbuf), ircm->source,
+            ircm->command, &ircm->params, ts);
 
 
     if (!success) {
@@ -108,7 +108,7 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
 /************************** SCREEN FORMAT IMPLs ******************************/
 
 static bool screenfmt_default(char *const buf, size_t bufsize,
-        const_str cmd, const msglist *const params, const_str ts)
+        const_str src, const_str cmd, const msglist *const params, const_str ts)
 {
     size_t n_bytes = 0;
     n_bytes += termutils_set_text_color_buf(buf, bufsize, TERMUTILS_COLOR_BLUE);
@@ -121,7 +121,7 @@ static bool screenfmt_default(char *const buf, size_t bufsize,
             TERMUTILS_COLOR_MAGENTA);
     if (n_bytes >= bufsize) return false;
 
-    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "SERVER SAYS: ");
+    bytes = sprintf_s(buf + n_bytes, bufsize - n_bytes, "%s: ", src);
     if (bytes < 0) return false;
     n_bytes += bytes;
 
