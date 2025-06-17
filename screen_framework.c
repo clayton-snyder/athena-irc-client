@@ -65,7 +65,11 @@ typedef struct screen {
 } screen;
 
 // Monotonically increasing counter for assigning screen IDs.
-static screen_id screen_id_counter = SCREEN_ID_HOME + 1;
+static screen_id s_screen_id_counter = SCREEN_ID_HOME + 1;
+
+// Used to hold the skipped ANSI escape sequences for formatting when printing
+// a partial wrapped message so they can be replayed in order.
+static char s_skipped_seqs_buf[SCREENMSG_BUF_SIZE] = { 0 };
 
 // Call this to get an ID for a new screen. This function will not return the
 // same ID twice, but may collide with any manually assigned screen IDs. Don't
@@ -73,7 +77,23 @@ static screen_id screen_id_counter = SCREEN_ID_HOME + 1;
 static screen_id get_next_screen_id(void);
 
 // Utility functions for formatting a scrlog to a rowsXcols screen.
-static size_t calc_screen_offset(const char *msg, size_t rows, size_t cols);
+
+// Returns the offset index up to which the provided message could be printed
+// and fit in the specified number of rows and columns.
+// If provided, n_visible_chars will be populated with the actual number of
+// visible characters that would be printed up to that offset (i.e., excluding
+// characters that are part of ANSI escape sequences).
+// If not NULL, skipped_seqs_buf will be populated in-order with any ANSI escape
+// sequences in msg prior to the returned offset value, allowing callers to
+// replay those sequences to reach the correct formatting state at the offset 
+// value in the original string. 
+// NOTE: If skipped_seqs_buf_size <= strlen(msg), skipped_seqs_buf will NOT be
+// populated. If NULL is passed for skipped_seqs_buf, skipped_seqs_buf_size
+// should be 0.
+static size_t calc_screen_offset(
+        const_str msg, size_t rows, size_t cols,
+        size_t *const n_visible_chars,
+        char *const skipped_seqs_buf, size_t skipped_seqs_buf_size);
 static int num_lines(char *msg, int cols);
 static size_t strlen_on_screen(const char *msg);
 
@@ -119,7 +139,7 @@ static void screenlog_evict_min_to_free(
 /******************************* INTERNAL IMPLs ******************************/
 
 static screen_id get_next_screen_id(void) {
-    return screen_id_counter++;
+    return s_screen_id_counter++;
 }
 
 static void screenlog_push_copy(screenlog_list *const scrlog, const_str msg) {
@@ -387,8 +407,10 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
         // newline encountered (resetting chars counter) until "rows_skipped" is
         // equal to (msg_rows - rows_left). then you're left with proper offset.
         //msg_offset_start = term_cols * (msg_rows - rows_left);
-        msg_offset_start = 
-            calc_screen_offset(curr_node->msg, msg_rows - rows_left, term_cols);
+        msg_offset_start = calc_screen_offset(
+                    curr_node->msg, msg_rows - rows_left, term_cols,
+                    NULL,
+                    s_skipped_seqs_buf, sizeof(s_skipped_seqs_buf));
         rows_used += rows_left;
         assert(rows_used == buf_rows);
         // Keep curr_node in place because we start from there
@@ -403,7 +425,14 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
     else st->scroll_at_top = false;
 
     size_t i_buf = rows_used = 0;
-    // Start by writing only from the offset.
+    // First, write any ANSI sequences we skipped.
+    // TODO: debug assert
+    size_t seqbuf_len = strlen(s_skipped_seqs_buf);
+    assert(seqbuf_len == 0 || seqbuf_len < msg_offset_start);
+    while ((buf[i_buf] = s_skipped_seqs_buf[i_buf]) != '\0') i_buf++;
+    s_skipped_seqs_buf[0] = '\0';
+
+    // Then write the first msg from the offset.
     assert(msg_offset_start < strlen(curr_node->msg));
     char *msg = curr_node->msg;
     size_t i_msg = msg_offset_start;
@@ -425,9 +454,10 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
         int msg_rows = num_lines(msg, term_cols);
         i_msg = 0;
         if (rows_filled_in_buf + msg_rows > buf_rows) {
-            //size_t msg_offset_end = term_cols * (buf_rows - rows_filled_in_buf);
+            size_t n_visible_chars = 0;
             size_t msg_offset_end = calc_screen_offset(
-                    msg, buf_rows - rows_filled_in_buf, term_cols);
+                  msg, buf_rows - rows_filled_in_buf, term_cols,
+                  &n_visible_chars, NULL, 0);
 
             while (i_msg < msg_offset_end && msg[i_msg] != '\0') 
                 if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
@@ -435,7 +465,8 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
             buf[i_buf++] = '\0'; // This is the last message
 
             rows_filled_in_buf += 
-                i_msg / term_cols + (i_msg % term_cols == 0 ? 0 : 1);
+                n_visible_chars / term_cols
+                + (n_visible_chars % term_cols == 0 ? 0 : 1);
             assert(rows_filled_in_buf == buf_rows);
             continue;
         }
@@ -467,46 +498,6 @@ static int num_lines(char *msg, int cols) {
     return len / cols + (len % cols == 0 ? 0 : 1);
 }
 
-static size_t calc_screen_offset(const char *msg, size_t rows, size_t cols) {
-    size_t msglen = strlen(msg);
-
-    assert(msg != NULL);
-    assert(msglen > rows * cols);
-
-    // Offset is rows * cols plus all chars in each ANSI escape seq.
-    size_t offset = rows * cols;
-    size_t i = 0, printchars = 0;
-    while (printchars < rows * cols) {
-        assert(i < msglen);
-        assert(msg[i] != '\0');
-        assert(msg[i] != '\n');
-
-        // If we reach the end of the string before finding enough printable 
-        // chars, in theory it means the offset is 0 (whole string fits). In
-        // practice, it probably means a string with an unterminated ANSI escape
-        // sequence. Print it all so it can't hide.
-        // (This is all assuming asserts are turned off).
-        if (i >= msglen) return 0;
-
-        // Redundant, but the specificity of the earlier asserts is handy.
-        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
-        if (msg[i] == ESC[0]) {
-            while (msg[i] != 'm') {
-                offset++;
-                i++;
-                assert(msg[i] >= ' ');
-                assert(i < msglen);
-                // See earlier comment on this return case; this probably means
-                // a bad string, so don't let it hide.
-                if (i >= msglen) return 0;
-            }
-            offset++;
-        } else printchars++; 
-        i++;
-    }
-    return offset;
-}
-
 // This impl has tons of asserts because it's difficult to really validate the
 // ANSI escape sequences. Someone could send an unterminatd ANSI escape and blow
 // the whole thing up, so I'm aggressively flagging those.
@@ -533,4 +524,64 @@ static size_t strlen_on_screen(const char *msg) {
 
     return on_screen_len;
 }
+
+static size_t calc_screen_offset(
+        const_str msg, size_t rows, size_t cols,
+        size_t *const n_visible_chars,
+        char *skipped_seqs_buf, size_t skipped_seqs_buf_size)
+{
+    assert(msg != NULL);
+    size_t msglen = strlen(msg);
+    assert(skipped_seqs_buf_size == 0 || skipped_seqs_buf_size > msglen);
+    assert(msglen > rows * cols);
+
+    if (skipped_seqs_buf_size < msglen) skipped_seqs_buf = NULL;
+
+    // Offset is rows * cols plus all chars in each ANSI escape seq.
+    size_t offset = rows * cols;
+    size_t i_msg = 0, i_seqs = 0, vischars = 0;
+    while (vischars < rows * cols) {
+        assert(i_msg < msglen);
+        assert(msg[i_msg] != '\0');
+        assert(msg[i_msg] != '\n');
+
+        // If we reach the end of the string before finding enough printable 
+        // chars, in theory it means the offset is 0 (whole string fits). In
+        // practice, it probably means a string with an unterminated ANSI escape
+        // sequence. Print it all so it can't hide.
+        // (This is all assuming asserts are turned off).
+        if (i_msg >= msglen) {
+            if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
+            if (n_visible_chars != NULL) *n_visible_chars = vischars;
+            return 0;
+        }
+
+        // Redundant, but the specificity of the earlier asserts is handy.
+        assert(msg[i_msg] >= ' ' || msg[i_msg] == ESC[0]);
+        if (msg[i_msg] == ESC[0]) {
+            while (msg[i_msg] != 'm') {
+                offset++;
+                if (skipped_seqs_buf != NULL)
+                    skipped_seqs_buf[i_seqs++] = msg[i_msg];
+                i_msg++;
+                assert(msg[i_msg] >= ' ');
+                assert(i_msg < msglen);
+                // See earlier comment on this return case; this probably means
+                // a bad string, so don't let it hide.
+                if (i_msg >= msglen) {
+                    if (n_visible_chars != NULL) *n_visible_chars = vischars;
+                    if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
+                    return 0;
+                }
+            }
+            if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs++] = 'm';
+            offset++;
+        } else vischars++; 
+        i_msg++;
+    }
+    if (n_visible_chars != NULL) *n_visible_chars = vischars;
+    if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs] = '\0';
+    return offset;
+}
+
 
