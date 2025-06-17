@@ -416,11 +416,12 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
         // Keep curr_node in place because we start from there
     }
 
-    // I know it's weird. Need the second condition for g_scroll_at_top and this
-    // is cleaner than an extra if block.
-    if (curr_node == NULL || curr_node == list.head) {
+    if (curr_node == NULL) {
         curr_node = list.head;
         st->scroll_at_top = true;
+        // If the window is widened, this brings down scroll accordingly
+        st->scroll =
+            rows_used + rows_skipped - (rows_skipped - st->scroll) - buf_rows;
     }
     else st->scroll_at_top = false;
 
