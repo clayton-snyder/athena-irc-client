@@ -222,7 +222,10 @@ static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
 /************************* LOCALCMD HANDLER IMPLs ****************************/
 
 // Returns true if program should exit.
-bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
+// TODO: Remove nick and channel params. Access those from a query or state
+// struct when needed
+bool handle_user_command(char *msg, const_str nick, const_str channel,
+        SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
@@ -255,7 +258,7 @@ bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
         // TODO: send to active_screen screenlog
         
         bool send_success =
-            try_send_as_irc(sock, "PRIVMSG %s :%s", "#codetest", msg);
+            try_send_as_irc(sock, "PRIVMSG %s :%s", channel, msg);
         
         bool fmt_success = false;
         if (send_success)

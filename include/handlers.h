@@ -10,4 +10,5 @@
 bool handle_ircmsg(ircmsg *const ircm, const_str ts); 
 
 // Dispatches to a specific localcmd handler by reading 'cmd_str'.
-bool handle_user_command(char *cmd, const_str nick, SOCKET sock, const_str ts);
+bool handle_user_command(char *cmd, const_str nick, const_str channel,
+        SOCKET sock, const_str ts);

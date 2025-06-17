@@ -35,6 +35,7 @@
 #define TIMESTAMP_BUFF_SIZE 20
 
 #define MAX_NICK_LEN 9
+#define MAX_CHANNEL_NAME_LEN 50
 
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID);
@@ -89,6 +90,21 @@ int main(int argc, char* argv[]) {
             return 23;
         }
         nick = argv[4];
+    }
+
+    const char *channel = "#codetest";
+    if (argc >= 6) {
+        if (strlen(argv[5]) > MAX_CHANNEL_NAME_LEN) {
+            log_fmt(LOGLEVEL_ERROR, "Invalid channel name '%s': can't be longer"
+                     " than %d characters.", argv[5], MAX_CHANNEL_NAME_LEN);
+            return 23;
+        }
+        if (strchr("&#+!", argv[5][0]) == NULL) {
+            log_fmt(LOGLEVEL_ERROR, "Invalid channel name '%s': must begin with"
+                    " one of '&', '#', '+', or '!'.", argv[5]);
+            return 23;
+        }
+        channel = argv[5];
     }
 
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
@@ -162,11 +178,12 @@ int main(int argc, char* argv[]) {
     // TODO: tell server we're not capable of processing tags
     char cmdbuf_nick[MAX_NICK_LEN + 7 + 1];
     sprintf_s(cmdbuf_nick, sizeof(cmdbuf_nick), "NICK %s\r\n", nick);
+    char cmdbuf_join[MAX_CHANNEL_NAME_LEN + 7 + 1];
+    sprintf_s(cmdbuf_join, sizeof(cmdbuf_join), "JOIN %s\r\n", channel);
     const char *send_buff[] = {
         cmdbuf_nick,
         "USER ircC 0 * :AthenaIRC Client\r\n",
-        "JOIN #codetest\r\n",
-        "PRIVMSG #codetest :All systems operational.\r\n"
+        cmdbuf_join
     };
 
     for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
@@ -247,7 +264,7 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            bye = handle_user_command(msg, nick, sock, timestamp_buf);
+            bye = handle_user_command(msg, nick, channel, sock, timestamp_buf);
             if (bye) break;
         }
         msglist_free(&msgs_ui);

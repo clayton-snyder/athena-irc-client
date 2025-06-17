@@ -503,12 +503,18 @@ static int num_lines(char *msg, int cols) {
 // ANSI escape sequences. Someone could send an unterminatd ANSI escape and blow
 // the whole thing up, so I'm aggressively flagging those.
 static size_t strlen_on_screen(const char *msg) {
+    const_str logpfx = "strlen_on_screen()";
     size_t msglen = strlen(msg);
     size_t on_screen_len = 0;
     for (size_t i = 0; i < msglen; i++) {
-        assert(msg[i] != '\n');
-        // Redundant, but the specificity of the newline assert is handy.
-        assert(msg[i] >= ' ' || msg[i] == ESC[0]);
+        if (msg[i] == '\n')
+            log_fmt(LOGLEVEL_ERROR, "[%s] Newline at index %zu.", logpfx, i);
+        else if (msg[i] < ' ' && msg[i] != ESC[0]) {
+            log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
+                    "Msg: '%s'",
+                    logpfx, i, (int)msg[i], msg);
+            continue;
+        }
 
         // Fast-forward through ANSI escapes
         while (msg[i] == ESC[0]) {
@@ -516,7 +522,11 @@ static size_t strlen_on_screen(const char *msg) {
                 assert(msg[i] != '\0');
                 assert(msg[i] != '\n');
                 // Redundant, but the specificity of the above two is handy.
-                assert(msg[i] >= ' ');
+                if (msg[i] < ' ')
+                    log_fmt(LOGLEVEL_ERROR,
+                            "[%s] Invis char in ASCII seq at index %zu: (%d)\n"
+                            "Msg: '%s'",
+                            logpfx, i, (int)msg[i], msg);
                 assert(i < msglen);
             }
         }
@@ -531,6 +541,7 @@ static size_t calc_screen_offset(
         size_t *const n_visible_chars,
         char *skipped_seqs_buf, size_t skipped_seqs_buf_size)
 {
+    const_str logpfx = "calc_screen_offset()";
     assert(msg != NULL);
     size_t msglen = strlen(msg);
     assert(skipped_seqs_buf_size == 0 || skipped_seqs_buf_size > msglen);
@@ -544,7 +555,15 @@ static size_t calc_screen_offset(
     while (vischars < rows * cols) {
         assert(i_msg < msglen);
         assert(msg[i_msg] != '\0');
-        assert(msg[i_msg] != '\n');
+        if (msg[i_msg] == '\n')
+            log_fmt(LOGLEVEL_ERROR, "[%s] NL at index %zu.", logpfx, i_msg);
+        else if (msg[i_msg] < ' ' && msg[i_msg] != ESC[0]) {
+            log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
+                    "Msg: '%s'",
+                    logpfx, i_msg, (int)msg[i_msg], msg);
+            i_msg++;
+            continue;
+        }
 
         // If we reach the end of the string before finding enough printable 
         // chars, in theory it means the offset is 0 (whole string fits). In
@@ -557,15 +576,17 @@ static size_t calc_screen_offset(
             return 0;
         }
 
-        // Redundant, but the specificity of the earlier asserts is handy.
-        assert(msg[i_msg] >= ' ' || msg[i_msg] == ESC[0]);
         if (msg[i_msg] == ESC[0]) {
             while (msg[i_msg] != 'm') {
                 offset++;
                 if (skipped_seqs_buf != NULL)
                     skipped_seqs_buf[i_seqs++] = msg[i_msg];
                 i_msg++;
-                assert(msg[i_msg] >= ' ');
+                if (msg[i_msg] < ' ') 
+                    log_fmt(LOGLEVEL_ERROR,
+                            "[%s] Invis char in ASCII seq at index %zu: (%d)\n"
+                            "Msg: '%s'",
+                            logpfx, i_msg, (int)msg[i_msg], msg);
                 assert(i_msg < msglen);
                 // See earlier comment on this return case; this probably means
                 // a bad string, so don't let it hide.
