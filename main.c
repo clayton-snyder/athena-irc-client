@@ -34,6 +34,8 @@
 // Usually it will just be the time, though.
 #define TIMESTAMP_BUFF_SIZE 20
 
+#define MAX_NICK_LEN 9
+
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
@@ -79,7 +81,15 @@ int main(int argc, char* argv[]) {
         log_fmt(LOGLEVEL_WARNING, "No loglevel specified; set to 'warning'.");
     }
 
-    const char *nick = argc >= 5 ? argv[4] : "anon";
+    const char *nick = "anon";
+    if (argc >= 5) {
+        if (strlen(argv[4]) > MAX_NICK_LEN) {
+            log_fmt(LOGLEVEL_ERROR, "Nickname cannot be longer than %d "
+                    "characters.", MAX_NICK_LEN);
+            return 23;
+        }
+        nick = argv[4];
+    }
 
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
     
@@ -150,8 +160,10 @@ int main(int argc, char* argv[]) {
     log(LOGLEVEL_INFO, "Connected, apparently.\n");
 
     // TODO: tell server we're not capable of processing tags
+    char cmdbuf_nick[MAX_NICK_LEN + 7 + 1];
+    sprintf_s(cmdbuf_nick, sizeof(cmdbuf_nick), "NICK %s\r\n", nick);
     const char *send_buff[] = {
-        "NICK code\r\n",
+        cmdbuf_nick,
         "USER ircC 0 * :AthenaIRC Client\r\n",
         "JOIN #codetest\r\n",
         "PRIVMSG #codetest :All systems operational.\r\n"
