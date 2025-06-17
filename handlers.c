@@ -205,7 +205,7 @@ static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
 /************************* LOCALCMD HANDLER IMPLs ****************************/
 
 // Returns true if program should exit.
-bool handle_user_command(char *msg, SOCKET sock, const_str ts) {
+bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
@@ -243,15 +243,15 @@ bool handle_user_command(char *msg, SOCKET sock, const_str ts) {
         bool fmt_success = false;
         if (send_success)
             fmt_success = screenfmt_privmsg(s_scrbuf, sizeof(s_scrbuf),
-                                "REPLACEME", msg, ts);
+                                nick, msg, ts);
         else
             fmt_success = screenfmt_privmsg_error(s_scrbuf, sizeof(s_scrbuf),
-                                "Not Sent", "REPLACEME", msg, ts);
+                                "Not Sent", nick, msg, ts);
 
         if (!fmt_success) {
             log_fmt(LOGLEVEL_ERROR, "[%s] Couldn't screenfmt privmsg. "
-                    "from='%s', msg='%s', ts='%s'", "handle_ircmsg_privmsg()",
-                    "REPLACEME", msg, ts);
+                    "nick='%s', msg='%s', ts='%s'", "handle_ircmsg_privmsg()",
+                    nick, msg, ts);
             // TODO: Review this behavior. DEV only? Also send to right screen,
             // not just active
             screen_pushmsg_copy(screen_getid_active(), "<corrupted message>");

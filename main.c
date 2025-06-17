@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
         return 23;
     }
 
-    if (argc == 4) {
+    if (argc >= 4) {
         if (strcmp(argv[3], "spam") == 0) {
             set_logger_level(LOGLEVEL_SPAM);
         } else if (strcmp(argv[3], "dev") == 0) {
@@ -78,6 +78,8 @@ int main(int argc, char* argv[]) {
         set_logger_level(LOGLEVEL_WARNING);
         log_fmt(LOGLEVEL_WARNING, "No loglevel specified; set to 'warning'.");
     }
+
+    const char *nick = argc >= 5 ? argv[4] : "anon";
 
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
     
@@ -233,7 +235,7 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            bye = handle_user_command(msg, sock, timestamp_buf);
+            bye = handle_user_command(msg, nick, sock, timestamp_buf);
             if (bye) break;
         }
         msglist_free(&msgs_ui);
