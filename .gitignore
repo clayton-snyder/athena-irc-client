@@ -1,5 +1,6 @@
-*.obj
-*.exe
+#*.obj
+#*.exe
 *.log
 *.txt
 *_BK
+built
