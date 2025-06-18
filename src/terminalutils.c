@@ -176,9 +176,9 @@ size_t termutils_set_bg_color_256_buf(
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
     // don't call this if you don't have room
-    assert(maxlen >= ESC_SEQ_COLOR_256_MAX_LEN);
+    assert(maxlen > ESC_SEQ_COLOR_256_MAX_LEN);
 #endif
-    if (maxlen < ESC_SEQ_COLOR_256_MAX_LEN) return false;
+    if (maxlen <= ESC_SEQ_COLOR_256_MAX_LEN) return 0;
 
     char seq[ESC_SEQ_COLOR_256_MAX_LEN + 1];
     int len = sprintf_s(seq, sizeof(seq), ESC"[48;5;%dm", color_code);
@@ -186,7 +186,8 @@ size_t termutils_set_bg_color_256_buf(
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(len <= ESC_SEQ_COLOR_256_MAX_LEN);
 #endif
-    return write_if_fits(buf, len, seq);
+    if (len > (int) maxlen) return 0;
+    return write_if_fits(buf, maxlen, seq);
 }
 
 size_t termutils_reset_bg_color_buf(char *const buf, size_t maxlen) {

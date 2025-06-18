@@ -630,7 +630,7 @@ static size_t translate_src_char_to_buf(
             int ansi256 = color1 > 15 ? 141 : irc_to_ansi256_color[color1];
             assert(ansi256 < 256);
             n_written = termutils_set_text_color_256_buf(wbuf, maxlen, ansi256);
-            if (color2 > 0) {
+            if (color2 >= 0) {
                 ansi256 = color2 > 15 ? 82 : irc_to_ansi256_color[color2];
                 assert(ansi256 < 256);
                 n_written += termutils_set_bg_color_256_buf(
