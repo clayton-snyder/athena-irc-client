@@ -307,7 +307,8 @@ int main(int argc, char* argv[]) {
         draw_screen(h_stdout,
                 drawbuf_screen, sizeof(drawbuf_screen),
                 drawbuf_statline, sizeof(drawbuf_statline));
-
+        
+        fflush(logfile);
     }
 
     WaitForSingleObject(h_recv_thread, INFINITE);
