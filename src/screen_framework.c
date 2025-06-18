@@ -513,28 +513,33 @@ static size_t strlen_on_screen(const char *msg) {
     size_t msglen = strlen(msg);
     size_t on_screen_len = 0;
     for (size_t i = 0; i < msglen; i++) {
-        if (msg[i] < ' ' && strchr(CONCERNING_CHARS, msg[i]) != NULL) {
-            log_fmt(LOGLEVEL_ERROR,
-                    "[%s] Concerning char at index %zu: (%d)\nMsg: '%s'",
-                    logpfx, i, (int)msg[i], msg);
-            continue;
-        }
+        // Shouldn't see \r\n here. If it's a delimiter, the parser should have
+        // excluded it; if it's in the middle of the message, it should have
+        // repalced it in-line.
+        assert(msg[i] != '\r');
+        assert(msg[i] != '\n');
+        assert(msg[i] != '\0');
+
+        // We expect control characters (other than NUL, CR, LF) because they're
+        // used for message formatting within IRC messages.
+        if (msg[i] < ' ' && msg[i] != ESC[0]) continue;
 
         // Fast-forward through ANSI escapes
         while (msg[i] == ESC[0]) {
             while (msg[i++] != 'm' && i < msglen) {
-                assert(msg[i] != '\0');
-                assert(msg[i] != '\n');
-                // Redundant, but the specificity of the above two is handy.
-                if (msg[i] < ' ')
+                if (msg[i] < ' ') 
                     log_fmt(LOGLEVEL_ERROR,
-                            "[%s] Invis char in ASCII seq at index %zu: (%d)\n"
+                            "[%s] Ctrl char in ASCII seq at index %zu: (%d)\n"
                             "Msg: '%s'",
                             logpfx, i, (int)msg[i], msg);
-                assert(i < msglen);
+
+                // Within an ANSI escape, we do not expect control characters.
+                assert(msg[i] >= ' ');
             }
         }
-        if (msg[i] != '\0') on_screen_len++;
+        assert(msg[i] != '\r');
+        assert(msg[i] != '\n');
+        if (msg[i] >= ' ') on_screen_len++;
     }
 
     return on_screen_len;
@@ -557,26 +562,26 @@ static size_t calc_screen_offset(
     size_t offset = rows * cols;
     size_t i_msg = 0, i_seqs = 0, vischars = 0;
     while (vischars < rows * cols) {
+        // If we reach the end of the message without finding enough visible
+        // chars, then either this function or its caller messed up some math.
+        // Or there's an unterminated ANSI escape sequence. All crashworthy.
         assert(i_msg < msglen);
-        assert(msg[i_msg] != '\0');
-        if (msg[i_msg] < ' ' && strchr(CONCERNING_CHARS, msg[i_msg]) != NULL) {
-            log_fmt(LOGLEVEL_ERROR,
-                    "[%s] Concerning char at index %zu: (%d)\nMsg: '%s'",
-                    logpfx, i_msg, (int)msg[i_msg], msg);
-            i_msg++;
-            continue;
-        }
-
-        // If we reach the end of the string before finding enough printable 
-        // chars, in theory it means the offset is 0 (whole string fits). In
-        // practice, it probably means a string with an unterminated ANSI escape
-        // sequence. Print it all so it can't hide.
-        // (This is all assuming asserts are turned off).
+        
+        // If we're not crashing from this, count the last char and tell the 
+        // caller it all should fit.
         if (i_msg >= msglen) {
             if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
+            if (msg[i_msg] >= ' ') vischars++;
             if (n_visible_chars != NULL) *n_visible_chars = vischars;
             return 0;
         }
+
+        // Shouldn't see \r\n here. If it's a delimiter, the parser should have
+        // excluded it; if it's in the middle of the message, it should have
+        // repalced it in-line.
+        assert(msg[i_msg] != '\r');
+        assert(msg[i_msg] != '\n');
+        assert(msg[i_msg] != '\0');
 
         if (msg[i_msg] == ESC[0]) {
             while (msg[i_msg] != 'm') {
@@ -584,15 +589,24 @@ static size_t calc_screen_offset(
                 if (skipped_seqs_buf != NULL)
                     skipped_seqs_buf[i_seqs++] = msg[i_msg];
                 i_msg++;
+
                 if (msg[i_msg] < ' ') 
                     log_fmt(LOGLEVEL_ERROR,
-                            "[%s] Invis char in ASCII seq at index %zu: (%d)\n"
+                            "[%s] Ctrl char in ASCII seq at index %zu: (%d)\n"
                             "Msg: '%s'",
                             logpfx, i_msg, (int)msg[i_msg], msg);
-                assert(i_msg < msglen);
-                // See earlier comment on this return case; this probably means
-                // a bad string, so don't let it hide.
+
+                // Within an ANSI escape, we do not expect control characters.
+                assert(msg[i_msg] >= ' ');
+
                 if (i_msg >= msglen) {
+                    log_fmt(LOGLEVEL_ERROR, "[%s] Reached end of string while "
+                            "searching for ANSI escape terminator.\n"
+                            "vischars=%zu, i_msg=%zu, msglen=%zu\n"
+                            "Str: '%s'", logpfx, vischars, i_msg, msglen, msg);
+
+                    assert(i_msg < msglen);
+
                     if (n_visible_chars != NULL) *n_visible_chars = vischars;
                     if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
                     return 0;
@@ -600,12 +614,13 @@ static size_t calc_screen_offset(
             }
             if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs++] = 'm';
             offset++;
-        } else vischars++; 
+        } 
+        else if (msg[i_msg] >= ' ') vischars++; 
+        else offset++; // TODO: do we need to replay IRC formatters too?
         i_msg++;
     }
     if (n_visible_chars != NULL) *n_visible_chars = vischars;
     if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs] = '\0';
     return offset;
 }
-
 
