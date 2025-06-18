@@ -58,8 +58,7 @@ size_t termutils_set_underline_buf(char *const buf, size_t maxlen, bool on);
 size_t termutils_set_blinking_buf(char *const buf, size_t maxlen, bool on);
 size_t termutils_set_inverse_buf(char *const buf, size_t maxlen, bool on);
 size_t termutils_set_hidden_buf(char *const buf, size_t maxlen, bool on);
-size_t termutils_set_strikethrough_buf(
-        char *const buf, size_t maxlen, bool on);
+size_t termutils_set_striketh_buf(char *const buf, size_t maxlen, bool on);
 
 // Sets the text (foreground) color using the 8-16 color set (some terminals may
 // not support the _BRIGHT versions of colors).
@@ -104,7 +103,7 @@ void termutils_set_underline(bool on, FILE *const out);
 void termutils_set_blinking(bool on, FILE *const out);
 void termutils_set_inverse(bool on, FILE *const out);
 void termutils_set_hidden(bool on, FILE *const out);
-void termutils_set_strikethrough(bool on, FILE *const out);
+void termutils_set_striketh(bool on, FILE *const out);
 
 // Sets the text (foreground) color using the 8-16 color set (some terminals may
 // not support the _BRIGHT versions of colors).

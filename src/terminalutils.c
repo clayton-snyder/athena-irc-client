@@ -50,7 +50,7 @@ size_t termutils_set_hidden_buf(char *const buf, size_t maxlen, bool on) {
     return write_if_fits(buf, maxlen, on ? "\033[8m" : "\033[28m");
 }
 
-size_t termutils_set_strikethrough_buf(char *const buf, size_t maxlen, bool on) {
+size_t termutils_set_striketh_buf(char *const buf, size_t maxlen, bool on) {
     return write_if_fits(buf, maxlen, on ? "\033[9m" : "\033[29m");
 }
 
@@ -248,7 +248,7 @@ void termutils_set_hidden(bool on, FILE *const out) {
     fputs(on ? "\033[8m" : "\033[28m", out);
 }
 
-void termutils_set_strikethrough(bool on, FILE *const out) {
+void termutils_set_striketh(bool on, FILE *const out) {
     fputs(on ? "\033[9m" : "\033[29m", out);
 }
 

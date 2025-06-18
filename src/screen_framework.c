@@ -1,6 +1,7 @@
 #include "screen_framework.h"
 
 #include "log.h"
+#include "terminalutils.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -70,6 +71,13 @@ typedef struct screen {
     channel *channel_maybe;
 } screen;
 
+typedef struct format_toggles {
+    bool bold;
+    bool italic;
+    bool underline;
+    bool striketh;
+} format_toggles;
+
 // Monotonically increasing counter for assigning screen IDs.
 static screen_id s_screen_id_counter = SCREEN_ID_HOME + 1;
 
@@ -83,6 +91,9 @@ static char s_skipped_seqs_buf[SCREENMSG_BUF_SIZE] = { 0 };
 static screen_id get_next_screen_id(void);
 
 // Utility functions for formatting a scrlog to a rowsXcols screen.
+
+static void format_toggles_clear(format_toggles *const toggles);
+static bool is_digit(char c);
 
 // Returns the offset index up to which the provided message could be printed
 // and fit in the specified number of rows and columns.
@@ -100,6 +111,22 @@ static size_t calc_screen_offset(
         const_str msg, size_t rows, size_t cols,
         size_t *const n_visible_chars,
         char *const skipped_seqs_buf, size_t skipped_seqs_buf_size);
+
+// Looks at the char in src at i_src and writes to buf at i_buf accordingly.
+// If there's nothing special about src[i_src], this simply writes one char.
+// If src[i_src] is an IRC format control character, this function will write
+// the ANSI escape sequences to match the format specification.
+// This function will modify the passed-in index pointers for both the buffer
+// and the source string according to what it processes, so no incrementing by
+// the caller is necessary.
+// The format_toggles pointer is required to track the context, since many IRC
+// formatting options work as toggles. All toggles should be set back to false
+// after each message, in case the message did not explicitly toggle it off.
+static size_t translate_src_char_to_buf(
+        char *const buf, size_t *const i_buf, size_t bufsize,
+        const char *const src, size_t *const i_src, size_t srclen,
+        format_toggles *const togs);
+        
 static int num_lines(char *msg, int cols);
 static size_t strlen_on_screen(const char *msg);
 
@@ -370,7 +397,7 @@ void screen_pushmsg_take(screen_id scrid, char *const msg) {
     screenlog_push_take(&s_scr_active->scrlog, msg);
 }
 
-int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
+int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     assert(buf != NULL);
     assert(s_scr_active != NULL);
     // TODO: do we actually want to assert rows/cols > 0?
@@ -431,6 +458,8 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
     }
     else st->scroll_at_top = false;
 
+    format_toggles toggles = { 0 };
+
     size_t i_buf = rows_used = 0;
     // First, write any ANSI sequences we skipped.
     // TODO: debug assert
@@ -439,27 +468,31 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
     while ((buf[i_buf] = s_skipped_seqs_buf[i_buf]) != '\0') i_buf++;
     s_skipped_seqs_buf[0] = '\0';
 
-    // Then write the first msg from the offset.
-    assert(msg_offset_start < strlen(curr_node->msg));
-    char *msg = curr_node->msg;
-    size_t i_msg = msg_offset_start;
 
+    // Then write the first msg from the offset.
     // We're going to replace newlines in msgs for now (so we can see if the
     // server sends many and if we need to keep them. Probably should.)
     // We also write newlines instead of null terms (except the final one) since
     // the buffer will be printed as one string.
+    char *msg = curr_node->msg;
+    size_t i_msg = msg_offset_start;
+    size_t msglen = strlen(msg);
+    assert(i_msg < msglen);
     int rows_filled_in_buf = num_lines(&msg[i_msg], term_cols);
     while (msg[i_msg] != '\0')
         if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
     buf[i_buf++] = '\n';
+
     curr_node = curr_node->next;
     while (curr_node != NULL && rows_filled_in_buf < buf_rows) {
         // We should never have a display buffer too small to hold the highest
         // possible number of characters that could appear on the screen.
-        assert(i_buf + strlen(curr_node->msg) < buflen);
         msg = curr_node->msg;
+        msglen = strlen(msg);
+        assert(i_buf + msglen < bufsize);
         int msg_rows = num_lines(msg, term_cols);
         i_msg = 0;
+        format_toggles_clear(&toggles);
         if (rows_filled_in_buf + msg_rows > buf_rows) {
             size_t n_visible_chars = 0;
             size_t msg_offset_end = calc_screen_offset(
@@ -467,7 +500,8 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
                   &n_visible_chars, NULL, 0);
 
             while (i_msg < msg_offset_end && msg[i_msg] != '\0') 
-                if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
+                translate_src_char_to_buf(
+                        buf, &i_buf, bufsize, msg, &i_msg, msglen, &toggles);
 
             buf[i_buf++] = '\0'; // This is the last message
 
@@ -477,10 +511,11 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
             assert(rows_filled_in_buf == buf_rows);
             continue;
         }
+        while (msg[i_msg] != '\0')
+            translate_src_char_to_buf(
+                    buf, &i_buf, bufsize, msg, &i_msg, msglen, &toggles);
 
-        while (msg[i_msg] != '\0') 
-            if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
-        
+        i_buf += termutils_reset_all_buf(buf + i_buf, bufsize - (i_buf + 1));
         buf[i_buf++] = '\n';
         rows_filled_in_buf += msg_rows;
         curr_node = curr_node->next;
@@ -500,14 +535,149 @@ int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols) {
 /*****************************************************************************/
 /******************************* INTERNAL UTIL *******************************/
 
+#define IRC_FMT_BOLD 0x02
+#define IRC_FMT_ITALIC 0x1D
+#define IRC_FMT_UNDERLINE 0x1F
+#define IRC_FMT_STRIKETH 0x1E
+#define IRC_FMT_RESET 0x0F
+#define IRC_FMT_COLOR 0x03
+#define IRC_FMT_COLOR_HEX 0x04
+#define IRC_FMT_COLOR_REV 0x16
+
+const unsigned int irc_to_ansi256_color[] = {
+    [0] =  7, [1] =232, [2] =  4, [3] =  2, [4] =  1, [5] = 94, [6] = 93,
+    [7] =214, [8] =  3, [9] = 82, [10]=  6, [11]= 51, [12]= 33, [13]=201, 
+    [14]=243, [15]=253
+};
+
+static void format_toggles_clear(format_toggles *const toggles) {
+    toggles->bold = false;
+    toggles->italic = false;
+    toggles->underline = false;
+    toggles->striketh = false;
+}
+
+static bool is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static size_t translate_src_char_to_buf(
+        char *const buf, size_t *const i_buf, size_t bufsize,
+        const char *const src, size_t *const i_src, size_t srclen,
+        format_toggles *const togs)
+{
+    assert(i_buf != NULL);
+    assert(buf != NULL);
+    assert(i_src != NULL);
+    assert(src != NULL);
+    assert(togs != NULL);
+    assert(bufsize > *i_buf + 1);
+    assert(srclen > *i_src);
+
+    size_t n_written = 0;
+    size_t n_read = 1;
+    size_t maxlen = bufsize - (*i_buf + 1);
+    char *wbuf = buf + *i_buf;
+    switch(src[*i_src]) {
+    case IRC_FMT_COLOR:
+        size_t max_inc = srclen - (*i_src + 1), curr_inc = 1;
+        int color1 = -1, color2 = -1;
+        do {
+            char c = src[*i_src + curr_inc];
+            if (is_digit(c)) {
+                color1 = (int)c - (int)'0';
+                n_read++;
+            }
+            else break;
+
+            if (++curr_inc > max_inc) break;
+
+            c = src[*i_src + curr_inc];
+            if (is_digit(c)) {
+                color1 *= 10;
+                color1 += (int)c - (int)'0';
+                n_read++;
+                c = src[*i_src + ++curr_inc];
+            }
+            if (c != ',' || ++curr_inc > max_inc) break;
+
+            c = src[*i_src + curr_inc];
+            if (is_digit(c)) {
+                color2 = (int)c - (int)'0';
+                n_read += 2; // Include the comma if it was a delimiter
+            }
+            else break;
+
+            if (++curr_inc > max_inc) break;
+
+            c = src[*i_src + curr_inc];
+            if (is_digit(c)) {
+                color2 *= 10;
+                color2 += (int)c - (int)'0';
+                n_read++;
+            }
+        } while (0);
+        assert(color1 < 100);
+        assert(color2 < 100);
+
+        // TODO: fix this when the full ANSI color map array is filled out
+        if (color1 < 0) {
+            n_written = termutils_reset_text_color_buf(wbuf, maxlen);
+            n_written += termutils_reset_bg_color_buf(
+                    wbuf + n_written, maxlen - n_written);
+        }
+        else {
+            int ansi256 = color1 > 15 ? 141 : irc_to_ansi256_color[color1];
+            assert(ansi256 < 256);
+            n_written = termutils_set_text_color_256_buf(wbuf, maxlen, ansi256);
+            if (color2 > 0) {
+                ansi256 = color2 > 15 ? 82 : irc_to_ansi256_color[color2];
+                assert(ansi256 < 256);
+                n_written += termutils_set_bg_color_256_buf(
+                        wbuf + n_written, maxlen - n_written, ansi256);
+            }
+        }
+        break;
+    case IRC_FMT_BOLD:
+        togs->bold = !togs->bold;
+        n_written = termutils_set_bold_buf(wbuf, maxlen, togs->bold);
+        break;
+    case IRC_FMT_ITALIC:
+        togs->italic = !togs->italic;
+        n_written = termutils_set_italic_buf(wbuf, maxlen, togs->italic);
+        break;
+    case IRC_FMT_UNDERLINE:
+        togs->underline = !togs->underline;
+        n_written = termutils_set_underline_buf(wbuf, maxlen, togs->underline);
+        break;
+    case IRC_FMT_STRIKETH:
+        togs->striketh = !togs->striketh;
+        n_written = termutils_set_striketh_buf(wbuf, maxlen, togs->striketh);
+        break;
+    case IRC_FMT_RESET:
+        togs->bold = togs->italic = togs->underline = togs->striketh = false;
+        n_written = termutils_reset_all_buf(wbuf, maxlen);
+        break;
+    default:
+        buf[*i_buf] = src[*i_src];
+        if (buf[*i_buf] == '\n') buf[*i_buf] = '_';
+        n_written = 1;
+    }
+    assert(n_written > 0);
+    *i_buf += n_written;
+    *i_src += n_read;
+    assert(n_written < maxlen);
+    assert(*i_src <= srclen);
+
+    return n_written;
+}
+
 static int num_lines(char *msg, int cols) {
     size_t len = strlen_on_screen(msg);
     return len / cols + (len % cols == 0 ? 0 : 1);
 }
 
-// This impl has tons of asserts because it's difficult to really validate the
-// ANSI escape sequences. Someone could send an unterminatd ANSI escape and blow
-// the whole thing up, so I'm aggressively flagging those.
+// The asserts are aggressive here to catch any unterminated ANSI esc sequences.
 static size_t strlen_on_screen(const char *msg) {
     const_str logpfx = "strlen_on_screen()";
     size_t msglen = strlen(msg);
@@ -522,7 +692,8 @@ static size_t strlen_on_screen(const char *msg) {
 
         // We expect control characters (other than NUL, CR, LF) because they're
         // used for message formatting within IRC messages.
-        if (msg[i] < ' ' && msg[i] != ESC[0]) continue;
+        if (msg[i] < ' ' && msg[i] != ESC[0] && msg[i] != IRC_FMT_COLOR)
+            continue;
 
         // Fast-forward through ANSI escapes
         while (msg[i] == ESC[0]) {
@@ -536,6 +707,22 @@ static size_t strlen_on_screen(const char *msg) {
                 // Within an ANSI escape, we do not expect control characters.
                 assert(msg[i] >= ' ');
             }
+        }
+        // Fast-forward through IRC color formatting
+        while (msg[i] == IRC_FMT_COLOR && msg[++i] != '\0') {
+            if (is_digit(msg[i])) i++;
+            else continue;
+            if (is_digit(msg[i])) i++;
+
+            if (msg[i] == ',') i++;
+            else continue;
+
+            if (is_digit(msg[i])) i++;
+            else {
+                i--; // Un-count the comma if it wasn't a delim
+                continue;
+            }
+            if (is_digit(msg[i])) i++;
         }
         assert(msg[i] != '\r');
         assert(msg[i] != '\n');
