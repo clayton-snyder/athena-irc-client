@@ -14,6 +14,11 @@
 // ANSI escape character used to signal the beginning of a formatting sequence.
 #define ESC "\033"
 
+// Bell/alert and backspace are not disallowed by the protocol, but I'd like to
+// know if they come through.
+// Null term, bell/alert, backspace, LF, CR
+#define CONCERNING_CHARS "\0\007\010\012\015"
+
 // This is just a string holder. Timestamp, author info, formatting, etc. should
 // all be interpolated into the string already. 'msg' will be copied directly 
 // into the screen buffer.
@@ -508,12 +513,10 @@ static size_t strlen_on_screen(const char *msg) {
     size_t msglen = strlen(msg);
     size_t on_screen_len = 0;
     for (size_t i = 0; i < msglen; i++) {
-        if (msg[i] == '\n')
-            log_fmt(LOGLEVEL_ERROR, "[%s] Newline at index %zu.", logpfx, i);
-        else if (msg[i] < ' ' && msg[i] != ESC[0]) {
-//             log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
-//                     "Msg: '%s'",
-//                     logpfx, i, (int)msg[i], msg);
+        if (msg[i] < ' ' && strchr(CONCERNING_CHARS, msg[i]) != NULL) {
+            log_fmt(LOGLEVEL_ERROR,
+                    "[%s] Concerning char at index %zu: (%d)\nMsg: '%s'",
+                    logpfx, i, (int)msg[i], msg);
             continue;
         }
 
@@ -556,12 +559,10 @@ static size_t calc_screen_offset(
     while (vischars < rows * cols) {
         assert(i_msg < msglen);
         assert(msg[i_msg] != '\0');
-        if (msg[i_msg] == '\n')
-            log_fmt(LOGLEVEL_ERROR, "[%s] NL at index %zu.", logpfx, i_msg);
-        else if (msg[i_msg] < ' ' && msg[i_msg] != ESC[0]) {
-//             log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
-//                     "Msg: '%s'",
-//                     logpfx, i_msg, (int)msg[i_msg], msg);
+        if (msg[i_msg] < ' ' && strchr(CONCERNING_CHARS, msg[i_msg]) != NULL) {
+            log_fmt(LOGLEVEL_ERROR,
+                    "[%s] Concerning char at index %zu: (%d)\nMsg: '%s'",
+                    logpfx, i_msg, (int)msg[i_msg], msg);
             i_msg++;
             continue;
         }
