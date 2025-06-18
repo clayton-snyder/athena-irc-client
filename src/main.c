@@ -6,6 +6,7 @@
 #include "terminalutils.h"
 
 #include <assert.h>
+#include <share.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -37,6 +38,8 @@
 #define MAX_NICK_LEN 9
 #define MAX_CHANNEL_NAME_LEN 50
 
+const_str logfile_name = "athena.log";
+
 DWORD WINAPI thread_main_recv(LPVOID data);
 DWORD WINAPI thread_main_ui(LPVOID);
 void DEBUG_print_addr_info(struct addrinfo* addr_info);
@@ -54,6 +57,24 @@ static void draw_screen(HANDLE h_stdout,
 
 
 int main(int argc, char* argv[]) {
+    // TODO: platform-specific code. Windows requires this weird _fsopen() in
+    // order to have the file be shareable, which is important for reading a
+    // log while using the client.
+    /*
+    FILE *logfile = NULL;
+    errno_t err = fopen_s(&logfile, logfile_name, "w");
+    if (err != 0) {
+        printf("[main] Can't open '%s' for write (%d).\n", logfile_name, err);
+        return 23;
+    }
+    */
+    FILE *logfile = _fsopen(logfile_name, "w", _SH_DENYWR);
+    if (logfile == NULL) {
+        printf("[main] Can't open '%s' for write.\n", logfile_name);
+        return 23;
+    }
+    log_init(logfile);
+
     if (argc < 3) {
         log(LOGLEVEL_ERROR,
                 "Usage: client <hostname> <port> [loglevel=\"warning\"]");
@@ -107,6 +128,7 @@ int main(int argc, char* argv[]) {
         channel = argv[5];
     }
 
+
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
     
     // TODO: placement?
@@ -126,6 +148,7 @@ int main(int argc, char* argv[]) {
     if (ver_hi != 2 || ver_lo != 2) {
         log(LOGLEVEL_ERROR, "[main] Expected version 2.2. Aborting.");
         WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
@@ -139,6 +162,7 @@ int main(int argc, char* argv[]) {
     if (result != 0) {
         log_fmt(LOGLEVEL_ERROR, "[main] getaddrinfo failed: %d", result);
         WSACleanup();
+        fclose(logfile);
         return 23;
     }
     DEBUG_print_addr_info(addr_info);
@@ -150,6 +174,7 @@ int main(int argc, char* argv[]) {
                 WSAGetLastError());
         freeaddrinfo(addr_info);
         WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
@@ -170,6 +195,7 @@ int main(int argc, char* argv[]) {
         log_fmt(LOGLEVEL_ERROR, "[main] Unable to connect to %s:%s",
                 argv[1], argv[2]);
         WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
@@ -201,8 +227,6 @@ int main(int argc, char* argv[]) {
     DWORD recv_thread_id = 0; //, ui_thread_id = 0;
     HANDLE h_recv_thread = CreateThread(
             NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
-//     HANDLE h_ui_thread = CreateThread(
-//             NULL, 0, thread_main_ui, NULL, 0, &ui_thread_id);
 
     // Use alternative screen buffer
     printf("\033[?1049h");
@@ -211,12 +235,16 @@ int main(int argc, char* argv[]) {
     HANDLE h_stdout = GetStdHandle(STD_OUTPUT_HANDLE);
     if (h_stdin == INVALID_HANDLE_VALUE || h_stdout == INVALID_HANDLE_VALUE) {
         printf("Invalid std handle\n");
+        WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
     DWORD prev_mode;
     if (!GetConsoleMode(h_stdin, &prev_mode)) {
         printf("GetConsoleMode() failed\n");
+        WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
@@ -227,6 +255,8 @@ int main(int argc, char* argv[]) {
                      ~(ENABLE_QUICK_EDIT_MODE);
     if (!SetConsoleMode(h_stdin, new_mode)) {
         printf("SetConsoleMode failed\n");
+        WSACleanup();
+        fclose(logfile);
         return 23;
     }
 
@@ -281,7 +311,6 @@ int main(int argc, char* argv[]) {
     }
 
     WaitForSingleObject(h_recv_thread, INFINITE);
-//     WaitForSingleObject(h_ui_thread, INFINITE);
 
     printf("\033[0m"); // Reset all formatting modes
     printf("\033[2J"); // Clear entire screen
@@ -292,10 +321,11 @@ int main(int argc, char* argv[]) {
 
     closesocket(sock);
     WSACleanup();
-
+    fclose(logfile);
 
     return 0;
 }
+
 // TODO: platform-specific code
 static bool process_console_input(HANDLE h_stdin) {
     bool user_quit = false;

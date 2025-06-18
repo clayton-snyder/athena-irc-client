@@ -305,7 +305,7 @@ void handle_localcmd_channel(char *msg, SOCKET sock) {
     char* tk_action = strtok_s(NULL, delim, &next_tk);
     if (tk_action == NULL || strcmp(tk_action, "help") == 0) {
         // TODO: output
-        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
+        termutils_set_text_color(TERMUTILS_COLOR_YELLOW, stdout);
         // TODO: HELP string
         puts("Usage: !channel <action> [args...]");
         puts("Avaiable actions for !channel:\n"
@@ -327,12 +327,12 @@ void handle_localcmd_channel(char *msg, SOCKET sock) {
             strtok_s(NULL, delim, &next_tk) != NULL)
         {
             // TODO: output
-            termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-            termutils_set_bold(true);
+            termutils_set_text_color(TERMUTILS_COLOR_YELLOW, stdout);
+            termutils_set_bold(true, stdout);
             puts("Too many arguments for 'list' command. [names] should be "
                     "a comma-separated list (with no spaces) of the channel"
                     " names you wish to display info about.");
-            termutils_reset_all();
+            termutils_reset_all(stdout);
         }
         try_send_as_irc(sock, "LIST %s", tk_names ? tk_names : "");
     }
@@ -374,11 +374,11 @@ static bool try_send_as_irc(SOCKET sock, const char* fmt, ...) {
         log_fmt(LOGLEVEL_WARNING, "[main] Expanded message too long (%d); not "
                 "sent: \'%s\'(truncated)", full_len, irc_cmd);
         //TODO: OUTPUT
-        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-        termutils_set_bold(true);
+        termutils_set_text_color(TERMUTILS_COLOR_YELLOW, stdout);
+        termutils_set_bold(true, stdout);
         printf("Your message is too long. Reduce it by %d characters.\n",
                 full_len + 2 - IRC_MSG_BUF_LEN);
-        termutils_reset_all();
+        termutils_reset_all(stdout);
         return false;
     }
 

@@ -32,8 +32,6 @@ ircmsg* msgutils_ircmsg_parse(char *raw_msg);
 
 void msgutils_ircmsg_free(ircmsg *ircm);
 
-void DEBUG_ircmsg_print(ircmsg *ircm);
-
 bool msgutils_get_timestamp(
         char *const buf, size_t bufsize, bool utc, timestamp_format format);
 

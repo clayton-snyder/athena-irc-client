@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <stdio.h> // TODO: REMOVE THIS WHEN SCREEN DISPLAYING
 #include <string.h>
+#include <windows.h> // TODO: REMOVe WHEN DONE WITH UNREFERENCED_PARAMETER()
 
 #define SCREEN_ID_HOME 0
 #define SCREEN_DISPLAY_TEXT_MAXLEN 1024
@@ -353,13 +354,13 @@ screen_ui_state *const screen_get_active_ui_state(void) {
 // }
 
 void screen_pushmsg_copy(screen_id scrid, const_str msg) {
-    log_fmt(LOGLEVEL_WARNING, "screen_pushmsg_copy(%zd)\n", scrid);
+    UNREFERENCED_PARAMETER(scrid);
     // TODO: look up the screen first!
     screenlog_push_copy(&s_scr_active->scrlog, msg); 
 }
 
 void screen_pushmsg_take(screen_id scrid, char *const msg) {
-    log_fmt(LOGLEVEL_WARNING, "screen_pushmsg_take(%zd)\n", scrid);
+    UNREFERENCED_PARAMETER(scrid);
     // TODO: look up the screen first!
     screenlog_push_take(&s_scr_active->scrlog, msg);
 }
@@ -510,9 +511,9 @@ static size_t strlen_on_screen(const char *msg) {
         if (msg[i] == '\n')
             log_fmt(LOGLEVEL_ERROR, "[%s] Newline at index %zu.", logpfx, i);
         else if (msg[i] < ' ' && msg[i] != ESC[0]) {
-            log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
-                    "Msg: '%s'",
-                    logpfx, i, (int)msg[i], msg);
+//             log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
+//                     "Msg: '%s'",
+//                     logpfx, i, (int)msg[i], msg);
             continue;
         }
 
@@ -558,9 +559,9 @@ static size_t calc_screen_offset(
         if (msg[i_msg] == '\n')
             log_fmt(LOGLEVEL_ERROR, "[%s] NL at index %zu.", logpfx, i_msg);
         else if (msg[i_msg] < ' ' && msg[i_msg] != ESC[0]) {
-            log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
-                    "Msg: '%s'",
-                    logpfx, i_msg, (int)msg[i_msg], msg);
+//             log_fmt(LOGLEVEL_WARNING, "[%s] Invisible char at index %zu: (%d)\n"
+//                     "Msg: '%s'",
+//                     logpfx, i_msg, (int)msg[i_msg], msg);
             i_msg++;
             continue;
         }

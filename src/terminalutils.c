@@ -20,18 +20,7 @@
 // 'maxlen'. Returns number of chars written, not including the null term, or 0
 // if 'str' could not be written.
 static size_t write_if_fits(
-        char *const buf, size_t maxlen, const char *const str)
-{
-    assert(buf != NULL);
-    assert(str != NULL);
-
-    size_t len = strlen(str);
-    if (len >= maxlen) return 0;
-
-    if (strcpy_s(buf, maxlen, str) != 0) return 0;
-
-    return len;
-}
+        char *const buf, size_t maxlen, const char *const str);
 
 size_t termutils_set_bold_buf(char *const buf, size_t maxlen, bool on) {
     return write_if_fits(buf, maxlen, on ? ESC"[1m" : ESC"[22m");
@@ -231,90 +220,90 @@ size_t termutils_reset_cursor_color_buf(char *const buf, size_t maxlen) {
     return write_if_fits(buf, maxlen, "\x1b]112\x07");
 }
 
-void termutils_set_bold(bool on) {
-    fputs(on ? "\033[1m" : "\033[22m", stdout);
+void termutils_set_bold(bool on, FILE *const out) {
+    fputs(on ? "\033[1m" : "\033[22m", out);
 }
 
-void termutils_set_faint(bool on) {
-    fputs(on ? "\033[2m" : "\033[22m", stdout);
+void termutils_set_faint(bool on, FILE *const out) {
+    fputs(on ? "\033[2m" : "\033[22m", out);
 }
 
-void termutils_set_italic(bool on) {
-    fputs(on ? "\033[3m" : "\033[23m", stdout);
+void termutils_set_italic(bool on, FILE *const out) {
+    fputs(on ? "\033[3m" : "\033[23m", out);
 }
 
-void termutils_set_underline(bool on) {
-    fputs(on ? "\033[4m" : "\033[24m", stdout);
+void termutils_set_underline(bool on, FILE *const out) {
+    fputs(on ? "\033[4m" : "\033[24m", out);
 }
 
-void termutils_set_blinking(bool on) {
-    fputs(on ? "\033[5m" : "\033[25m", stdout);
+void termutils_set_blinking(bool on, FILE *const out) {
+    fputs(on ? "\033[5m" : "\033[25m", out);
 }
 
-void termutils_set_inverse(bool on) {
-    fputs(on ? "\033[7m" : "\033[27m", stdout);
+void termutils_set_inverse(bool on, FILE *const out) {
+    fputs(on ? "\033[7m" : "\033[27m", out);
 }
 
-void termutils_set_hidden(bool on) {
-    fputs(on ? "\033[8m" : "\033[28m", stdout);
+void termutils_set_hidden(bool on, FILE *const out) {
+    fputs(on ? "\033[8m" : "\033[28m", out);
 }
 
-void termutils_set_strikethrough(bool on) {
-    fputs(on ? "\033[9m" : "\033[29m", stdout);
+void termutils_set_strikethrough(bool on, FILE *const out) {
+    fputs(on ? "\033[9m" : "\033[29m", out);
 }
 
-void termutils_set_text_color(termutils_color color) {
+void termutils_set_text_color(termutils_color color, FILE *const out) {
     switch (color) {
     case TERMUTILS_COLOR_BLACK:
-        fputs("\033[30m", stdout);
+        fputs("\033[30m", out);
         break;
     case TERMUTILS_COLOR_RED:
-        fputs("\033[31m", stdout);
+        fputs("\033[31m", out);
         break;
     case TERMUTILS_COLOR_GREEN:
-        fputs("\033[32m", stdout);
+        fputs("\033[32m", out);
         break;
     case TERMUTILS_COLOR_YELLOW:
-        fputs("\033[33m", stdout);
+        fputs("\033[33m", out);
         break;
     case TERMUTILS_COLOR_BLUE:
-        fputs("\033[34m", stdout);
+        fputs("\033[34m", out);
         break;
     case TERMUTILS_COLOR_MAGENTA:
-        fputs("\033[35m", stdout);
+        fputs("\033[35m", out);
         break;
     case TERMUTILS_COLOR_CYAN:
-        fputs("\033[36m\0", stdout);
+        fputs("\033[36m\0", out);
         break;
     case TERMUTILS_COLOR_WHITE:
-        fputs("\033[37m", stdout);
+        fputs("\033[37m", out);
         break;
     case TERMUTILS_COLOR_BLACK_BRIGHT:
-        fputs("\033[90m", stdout);
+        fputs("\033[90m", out);
         break;
     case TERMUTILS_COLOR_RED_BRIGHT:
-        fputs("\033[91m", stdout);
+        fputs("\033[91m", out);
         break;
     case TERMUTILS_COLOR_GREEN_BRIGHT:
-        fputs("\033[92m", stdout);
+        fputs("\033[92m", out);
         break;
     case TERMUTILS_COLOR_YELLOW_BRIGHT:
-        fputs("\033[93m", stdout);
+        fputs("\033[93m", out);
         break;
     case TERMUTILS_COLOR_BLUE_BRIGHT:
-        fputs("\033[94m", stdout);
+        fputs("\033[94m", out);
         break;
     case TERMUTILS_COLOR_MAGENTA_BRIGHT:
-        fputs("\033[95m", stdout);
+        fputs("\033[95m", out);
         break;
     case TERMUTILS_COLOR_CYAN_BRIGHT:
-        fputs("\033[96m", stdout);
+        fputs("\033[96m", out);
         break;
     case TERMUTILS_COLOR_WHITE_BRIGHT:
-        fputs("\033[97m", stdout);
+        fputs("\033[97m", out);
         break;
     case TERMUTILS_COLOR_DEFAULT:
-        fputs("\033[39m", stdout);
+        fputs("\033[39m", out);
         break;
     default:
 #ifdef TERMUTILS_DEBUG_ASSERT
@@ -324,69 +313,69 @@ void termutils_set_text_color(termutils_color color) {
     }
 }
 
-void termutils_set_text_color_256(int color_code) {
+void termutils_set_text_color_256(int color_code, FILE *const out) {
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
 #endif
-    printf("\033[38;5;%dm", color_code);
+    fprintf_s(out, "\033[38;5;%dm", color_code);
 }
 
-void termutils_reset_text_color(void) {
-    fputs("\033[39m", stdout);
+void termutils_reset_text_color(FILE *const out) {
+    fputs("\033[39m", out);
 }
 
-void termutils_set_bg_color(termutils_color color) {
+void termutils_set_bg_color(termutils_color color, FILE *const out) {
     switch (color) {
     case TERMUTILS_COLOR_BLACK:
-        fputs("\033[40m", stdout);
+        fputs("\033[40m", out);
         break;
     case TERMUTILS_COLOR_RED:
-        fputs("\033[41m", stdout);
+        fputs("\033[41m", out);
         break;
     case TERMUTILS_COLOR_GREEN:
-        fputs("\033[42m", stdout);
+        fputs("\033[42m", out);
         break;
     case TERMUTILS_COLOR_YELLOW:
-        fputs("\033[43m", stdout);
+        fputs("\033[43m", out);
         break;
     case TERMUTILS_COLOR_BLUE:
-        fputs("\033[44m", stdout);
+        fputs("\033[44m", out);
         break;
     case TERMUTILS_COLOR_MAGENTA:
-        fputs("\033[45m", stdout);
+        fputs("\033[45m", out);
         break;
     case TERMUTILS_COLOR_CYAN:
-        fputs("\033[46m", stdout);
+        fputs("\033[46m", out);
         break;
     case TERMUTILS_COLOR_WHITE:
-        fputs("\033[47m", stdout);
+        fputs("\033[47m", out);
         break;
     case TERMUTILS_COLOR_BLACK_BRIGHT:
-        fputs("\033[100m", stdout);
+        fputs("\033[100m", out);
         break;
     case TERMUTILS_COLOR_RED_BRIGHT:
-        fputs("\033[101m", stdout);
+        fputs("\033[101m", out);
         break;
     case TERMUTILS_COLOR_GREEN_BRIGHT:
-        fputs("\033[102m", stdout);
+        fputs("\033[102m", out);
         break;
     case TERMUTILS_COLOR_YELLOW_BRIGHT:
-        fputs("\033[103m", stdout);
+        fputs("\033[103m", out);
         break;
     case TERMUTILS_COLOR_BLUE_BRIGHT:
-        fputs("\033[104m", stdout);
+        fputs("\033[104m", out);
         break;
     case TERMUTILS_COLOR_MAGENTA_BRIGHT:
-        fputs("\033[105m", stdout);
+        fputs("\033[105m", out);
         break;
     case TERMUTILS_COLOR_CYAN_BRIGHT:
-        fputs("\033[106m", stdout);
+        fputs("\033[106m", out);
         break;
     case TERMUTILS_COLOR_WHITE_BRIGHT:
-        fputs("\033[107m", stdout);
+        fputs("\033[107m", out);
         break;
     case TERMUTILS_COLOR_DEFAULT:
-        fputs("\033[49m", stdout);
+        fputs("\033[49m", out);
         break;
     default:
 #ifdef TERMUTILS_DEBUG_ASSERT
@@ -396,25 +385,39 @@ void termutils_set_bg_color(termutils_color color) {
     }
 }
 
-void termutils_set_bg_color_256(int color_code) {
+void termutils_set_bg_color_256(int color_code, FILE *const out) {
 #ifdef TERMUTILS_DEBUG_ASSERT
     assert(color_code >= 0 && color_code <= 255);
 #endif
-    printf("\033[48;5;%dm", color_code);
+    fprintf_s(out, "\033[48;5;%dm", color_code);
 }
 
-void termutils_reset_bg_color(void) {
-    fputs("\033[49m", stdout);
+void termutils_reset_bg_color(FILE *const out) {
+    fputs("\033[49m", out);
 }
 
-void termutils_reset_all(void) {
-    fputs("\033[0m", stdout);
+void termutils_reset_all(FILE *const out) {
+    fputs("\033[0m", out);
 }
 
-void termutils_set_cursor_color(const char* color_str) {
-    printf("\x1b]12;%s\x07", color_str);
+void termutils_set_cursor_color(const char* color_str, FILE *const out) {
+    fprintf_s(out, "\x1b]12;%s\x07", color_str);
 }
 
-void termutils_reset_cursor_color(void) {
-    printf("\x1b]112\x07");
+void termutils_reset_cursor_color(FILE *const out) {
+    fprintf_s(out, "\x1b]112\x07");
+}
+
+static size_t write_if_fits(
+        char *const buf, size_t maxlen, const char *const str)
+{
+    assert(buf != NULL);
+    assert(str != NULL);
+
+    size_t len = strlen(str);
+    if (len >= maxlen) return 0;
+
+    if (strcpy_s(buf, maxlen, str) != 0) return 0;
+
+    return len;
 }

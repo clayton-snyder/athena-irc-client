@@ -22,8 +22,6 @@
 static void handle_bad_format(const char *rawmsg, const char *stage,
         ircmsg *new_ircmsg, const char* logpfx);
 
-void DEBUG_ircmsg_print(ircmsg *ircm);
-
 static void handle_bad_format(const char *rawmsg, const char *stage,
         ircmsg *new_ircmsg, const char* logpfx) 
 {
@@ -119,36 +117,6 @@ ircmsg* msgutils_ircmsg_parse(char *rawmsg) {
     log_fmt(LOGLEVEL_SPAM, "%s Finished parsing ircmsg.", logpfx);
 
     return new_ircmsg;
-}
-
-void DEBUG_ircmsg_print(ircmsg *ircm) {
-    if (ircm == NULL) {
-        printf("ircmsg=(null)\n");
-        return;
-    }
-
-    printf("   source: '%s'\n"
-           "   command: '%s'\n", ircm->source, ircm->command);
-
-    printf("   params: (count=%zu)[", ircm->params.count);
-    struct msgnode* curr = ircm->params.head;
-    size_t n_param = 0;
-    while (curr != NULL) {
-        termutils_set_text_color(TERMUTILS_COLOR_CYAN);
-        termutils_set_bold(true);
-        printf("%zu", ++n_param);
-        termutils_reset_text_color();
-        termutils_set_bold(false);
-        printf("='");
-        termutils_set_italic(true);
-        termutils_set_text_color(TERMUTILS_COLOR_YELLOW);
-        printf("%s", curr->msg);
-        termutils_set_italic(false);
-        termutils_reset_text_color();
-        printf("', ");
-        curr = curr->next;
-    }
-    printf("]\n");
 }
 
 void msgutils_ircmsg_free(ircmsg *ircm) {
