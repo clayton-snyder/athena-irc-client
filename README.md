@@ -43,7 +43,7 @@ that reading it is impossible).
 Messages prefixed with `!` are interpreted as client commands.
 Messages prefixed with `\` are interpreted as literal IRC messages and will be
 sent directly, without modification, *except* for replacing the null terminator
-with the IRC message delimiter (`\\r\\n`).
+with the IRC message delimiter (`\r\n`).
 Messages with no prefix are interpreted as an attempt to send a message to the
 current channel. 
 
