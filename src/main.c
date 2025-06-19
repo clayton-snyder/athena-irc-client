@@ -14,6 +14,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#define CODE_PAGE_UTF8 65001
+
 #define RECV_BUFF_LEN 1024 * 8
 
 // A longer input buffer helps because we can tell the user exactly how much
@@ -128,6 +130,8 @@ int main(int argc, char* argv[]) {
         channel = argv[5];
     }
 
+    bool utf8 = argc >= 7 && argv[6][0] != '0';
+
 
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
     
@@ -224,25 +228,24 @@ int main(int argc, char* argv[]) {
         log_fmt(LOGLEVEL_DEV, "[main] Sent: %s", send_buff[i]);
     }
 
-    DWORD recv_thread_id = 0; //, ui_thread_id = 0;
+    DWORD recv_thread_id = 0;
     HANDLE h_recv_thread = CreateThread(
             NULL, 0, thread_main_recv, &sock, 0, &recv_thread_id);
 
-    // Use alternative screen buffer
-    printf("\033[?1049h");
 
     HANDLE h_stdin = GetStdHandle(STD_INPUT_HANDLE);
     HANDLE h_stdout = GetStdHandle(STD_OUTPUT_HANDLE);
     if (h_stdin == INVALID_HANDLE_VALUE || h_stdout == INVALID_HANDLE_VALUE) {
-        printf("Invalid std handle\n");
+        log(LOGLEVEL_ERROR, "[main] GetStdHandle() returned invalid handle.");
         WSACleanup();
         fclose(logfile);
         return 23;
     }
 
-    DWORD prev_mode;
-    if (!GetConsoleMode(h_stdin, &prev_mode)) {
-        printf("GetConsoleMode() failed\n");
+    DWORD prev_console_mode;
+    if (!GetConsoleMode(h_stdin, &prev_console_mode)) {
+        log_fmt(LOGLEVEL_ERROR,
+                "[main] GetConsoleMode() failed (%lu).", GetLastError());
         WSACleanup();
         fclose(logfile);
         return 23;
@@ -254,11 +257,39 @@ int main(int argc, char* argv[]) {
 	DWORD new_mode = (ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS) &
                      ~(ENABLE_QUICK_EDIT_MODE);
     if (!SetConsoleMode(h_stdin, new_mode)) {
-        printf("SetConsoleMode failed\n");
+        log_fmt(LOGLEVEL_ERROR,
+                "[main] SetConsoleMode() failed (%lu).", GetLastError());
         WSACleanup();
         fclose(logfile);
         return 23;
     }
+
+    // Use alternative screen buffer
+    printf("\033[?1049h");
+
+    // Failure here is not worth exiting over; there will just be no Unicode.
+    DWORD prev_out_codepage = GetConsoleOutputCP();
+    log_fmt(LOGLEVEL_INFO, "[main] prev_out_codepage=%lu", prev_out_codepage);
+    if (prev_out_codepage == CODE_PAGE_UTF8) {
+        utf8 = true;
+        log_fmt(LOGLEVEL_WARNING, "[main] UTF-8 already enabled by console; "
+                "Unicode will be active regardless of user flag.");
+    }
+    else if (utf8) {
+        utf8 = (prev_out_codepage != 0);
+        if (!utf8)
+            log_fmt(LOGLEVEL_ERROR,
+                   "[main] GetConsoleOutputCP() failed (%lu). "
+                   "Unicode disabled.", GetLastError());
+        else if (!SetConsoleOutputCP(CODE_PAGE_UTF8)) {
+            utf8 = false;
+            log_fmt(LOGLEVEL_ERROR,
+                   "[main] SetConsoleOutputCP() failed (%lu). "
+                   "Unicode disabled.", GetLastError());
+        }
+    } else log(LOGLEVEL_WARNING, "[main] Unicode disabled by default.");
+
+    if (utf8) log(LOGLEVEL_WARNING, "[main] Unicode enabled.");
 
     bool bye = false;
     char drawbuf_screen[SCREEN_BUFF_SIZE] = { 0 };
@@ -316,11 +347,22 @@ int main(int argc, char* argv[]) {
 
     printf("\033[0m"); // Reset all formatting modes
     printf("\033[2J"); // Clear entire screen
+
+    if (SetConsoleMode(h_stdin, prev_console_mode) == 0)
+        log_fmt(LOGLEVEL_ERROR, "[main] SetConsoleMode() failed (%lu); "
+                "previous console mode not restored.", GetLastError());
+
+    if (utf8 && prev_out_codepage) {
+        if (SetConsoleOutputCP(prev_out_codepage))
+            log_fmt(LOGLEVEL_WARNING, "[main] Output codepage restored to %lu.",
+                    prev_out_codepage);
+        else
+            log_fmt(LOGLEVEL_ERROR, "[main] SetConsoleOutputCP() failed (%lu); "
+                    "previous output codepage not restored.", GetLastError());
+    }
+
     printf("\033[?1049l"); // Return from alternative screen buffer
-
-    if (!SetConsoleMode(h_stdin, prev_mode))
-        printf("SetConsoleMode(): Failed to reset to old console mode.\n");
-
+    
     closesocket(sock);
     WSACleanup();
     fclose(logfile);
