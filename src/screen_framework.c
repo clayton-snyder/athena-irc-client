@@ -5,7 +5,7 @@
 
 #include <assert.h>
 #include <stdlib.h>
-#include <stdio.h> // TODO: REMOVE THIS WHEN SCREEN DISPLAYING
+#include <stdio.h>
 #include <string.h>
 #include <windows.h> // TODO: REMOVe WHEN DONE WITH UNREFERENCED_PARAMETER()
 
@@ -83,7 +83,7 @@ static screen_id s_screen_id_counter = SCREEN_ID_HOME + 1;
 
 // Used to hold the skipped ANSI escape sequences for formatting when printing
 // a partial wrapped message so they can be replayed in order.
-static char s_skipped_seqs_buf[SCREENMSG_BUF_SIZE] = { 0 };
+static char s_replaybuf[SCREENMSG_BUF_SIZE] = { 0 };
 
 // Call this to get an ID for a new screen. This function will not return the
 // same ID twice, but may collide with any manually assigned screen IDs. Don't
@@ -100,17 +100,15 @@ static bool is_digit(char c);
 // If provided, n_visible_chars will be populated with the actual number of
 // visible characters that would be printed up to that offset (i.e., excluding
 // characters that are part of ANSI escape sequences).
-// If not NULL, skipped_seqs_buf will be populated in-order with any ANSI escape
+// If not NULL, replaybuf will be populated in-order with any ANSI escape
 // sequences in msg prior to the returned offset value, allowing callers to
 // replay those sequences to reach the correct formatting state at the offset 
 // value in the original string. 
-// NOTE: If skipped_seqs_buf_size <= strlen(msg), skipped_seqs_buf will NOT be
-// populated. If NULL is passed for skipped_seqs_buf, skipped_seqs_buf_size
-// should be 0.
+// NOTE: If replaybuf_size <= strlen(msg), replaybuf will NOT be populated.
 static size_t calc_screen_offset(
         const_str msg, size_t rows, size_t cols,
         size_t *const n_visible_chars,
-        char *const skipped_seqs_buf, size_t skipped_seqs_buf_size);
+        char *const replaybuf, size_t replaybuf_size);
 
 // Looks at the char in src at i_src and writes to buf at i_buf accordingly.
 // If there's nothing special about src[i_src], this simply writes one char.
@@ -217,10 +215,6 @@ static void screenlog_push_copy(screenlog_list *const scrlog, const_str msg) {
     }
 
     DEBUG_validate_screenlog_list(scrlog);
-
-    // TODO: remove this when screen is drawing
-    // AND REMOVE stdio.h!!!
-    printf("%s\n", new_node->msg);
 }
 
 static void screenlog_push_take(screenlog_list *const scrlog, char *const msg) {
@@ -339,10 +333,6 @@ static void DEBUG_validate_screenlog_list(const screenlog_list *const scrlog) {
         curr = curr->next;
     }
     assert(last == scrlog->tail);
-    log_fmt(LOGLEVEL_DEV, "actual_size_bytes=%d, curr_size_bytes=%d\n"
-            "actual_n_msgs=%d, n_msgs=%d\n",
-            actual_size_bytes, scrlog->curr_size_bytes,
-            actual_n_msgs, scrlog->n_msgs);
     assert(actual_size_bytes == scrlog->curr_size_bytes);
     assert(actual_n_msgs == scrlog->n_msgs);
 
@@ -435,15 +425,10 @@ int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
         }
 
         int rows_left = buf_rows - rows_used;
-        // TODO: For newlines, you would start at 0 and count forward, checking
-        // the string, and incrementing "rows_skipped" every 80 chars OR on a 
-        // newline encountered (resetting chars counter) until "rows_skipped" is
-        // equal to (msg_rows - rows_left). then you're left with proper offset.
-        //msg_offset_start = term_cols * (msg_rows - rows_left);
         msg_offset_start = calc_screen_offset(
                     curr_node->msg, msg_rows - rows_left, term_cols,
                     NULL,
-                    s_skipped_seqs_buf, sizeof(s_skipped_seqs_buf));
+                    s_replaybuf, sizeof(s_replaybuf));
         rows_used += rows_left;
         assert(rows_used == buf_rows);
         // Keep curr_node in place because we start from there
@@ -458,15 +443,16 @@ int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     }
     else st->scroll_at_top = false;
 
-    format_toggles toggles = { 0 };
 
-    size_t i_buf = rows_used = 0;
-    // First, write any ANSI sequences we skipped.
-    // TODO: debug assert
-    size_t seqbuf_len = strlen(s_skipped_seqs_buf);
-    assert(seqbuf_len == 0 || seqbuf_len < msg_offset_start);
-    while ((buf[i_buf] = s_skipped_seqs_buf[i_buf]) != '\0') i_buf++;
-    s_skipped_seqs_buf[0] = '\0';
+    // First, write any ANSI or IRC format sequences we skipped.
+    format_toggles toggles = { 0 };
+    size_t i_buf = 0, i_rebuf = 0;
+    size_t rebuf_len = strlen(s_replaybuf);
+    assert(rebuf_len == 0 || rebuf_len < msg_offset_start);
+    while (s_replaybuf[i_rebuf] != '\0')
+        translate_src_char_to_buf(
+              buf, &i_buf, bufsize, s_replaybuf, &i_rebuf, rebuf_len, &toggles);
+    s_replaybuf[0] = '\0';
 
 
     // Then write the first msg from the offset.
@@ -480,7 +466,9 @@ int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     assert(i_msg < msglen);
     int rows_filled_in_buf = num_lines(&msg[i_msg], term_cols);
     while (msg[i_msg] != '\0')
-        if ((buf[i_buf++] = msg[i_msg++]) == '\n') buf[i_buf - 1] = '_';
+        translate_src_char_to_buf(
+                buf, &i_buf, bufsize, msg, &i_msg, msglen, &toggles);
+    i_buf += termutils_reset_all_buf(buf + i_buf, bufsize - (i_buf + 1));
     buf[i_buf++] = '\n';
 
     curr_node = curr_node->next;
@@ -530,7 +518,59 @@ int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     return rows_filled_in_buf;
 }
 
+size_t screen_DEBUG_char_details_buf(
+        char *buf, const_str msg, size_t bufsize,
+        size_t entries_per_row,
+        size_t offset_calc_rows, size_t offset_calc_cols)
+{
+    size_t i_buf = 0;
+    unsigned char c;
+    for (size_t i_msg = 0; i_msg < strlen(msg); i_msg++) {
+        if (i_msg > 0 && i_msg % entries_per_row == 0)
+            i_buf += sprintf_s(buf + i_buf, bufsize - i_buf, "\n");
 
+        c = msg[i_msg];
+        if (c < ' ') {
+            i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                    "\033[38;5;246m%03zu: \033[38;5;242m%02x~ ",
+                    i_msg, c);
+        } else {
+            i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                 "\033[38;5;246m%03zu:\033[1;31m%c\033[22m\033[38;5;242m%02x  ",
+                 i_msg, c, c);
+        }
+    }
+
+    size_t visch = 0;
+    char rebuf[1000];
+    size_t offset =  calc_screen_offset(msg, offset_calc_rows, offset_calc_cols,
+            &visch, rebuf, sizeof(rebuf));
+
+    i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+           "\n\033[33m(%zux%zu) offset=%zu, visch=%zu, rebuflen=%zu\n\033[0m",
+           offset_calc_rows, offset_calc_cols, offset, visch, strlen(rebuf));
+
+    size_t irb = 0;
+    while (rebuf[irb] != '\0') {
+        if (irb > 0 && irb % entries_per_row == 0)
+            i_buf += sprintf_s(buf + i_buf, bufsize - i_buf, "\n");
+
+        c = rebuf[irb];
+        if (c < ' ') {
+            i_buf += sprintf_s( buf + i_buf, bufsize - i_buf,
+                    "\033[38;5;246m%03zu: \033[38;5;242m%02x~ ",
+                    irb, c);
+        } else {
+            i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                 "\033[38;5;246m%03zu:\033[1;31m%c\033[22m\033[38;5;242m%02x  ",
+                 irb, c, c);
+        }
+        irb++;
+    }
+
+    i_buf += sprintf_s(buf + i_buf, bufsize - i_buf, "\033[0m\n");
+    return i_buf;
+}
 
 /*****************************************************************************/
 /******************************* INTERNAL UTIL *******************************/
@@ -548,6 +588,11 @@ const unsigned int irc_to_ansi256_color[] = {
     [0] =  7, [1] =232, [2] =  4, [3] =  2, [4] =  1, [5] = 94, [6] = 93,
     [7] =214, [8] =  3, [9] = 82, [10]=  6, [11]= 51, [12]= 33, [13]=201, 
     [14]=243, [15]=253
+};
+
+const char irc_ctrl_chars[] = {
+    IRC_FMT_BOLD, IRC_FMT_ITALIC, IRC_FMT_UNDERLINE, IRC_FMT_STRIKETH,
+    IRC_FMT_RESET, IRC_FMT_COLOR, IRC_FMT_COLOR_HEX, IRC_FMT_COLOR_REV
 };
 
 static void format_toggles_clear(format_toggles *const toggles) {
@@ -735,19 +780,19 @@ static size_t strlen_on_screen(const char *msg) {
 static size_t calc_screen_offset(
         const_str msg, size_t rows, size_t cols,
         size_t *const n_visible_chars,
-        char *skipped_seqs_buf, size_t skipped_seqs_buf_size)
+        char *replaybuf, size_t replaybuf_size)
 {
     const_str logpfx = "calc_screen_offset()";
     assert(msg != NULL);
     size_t msglen = strlen(msg);
-    assert(skipped_seqs_buf_size == 0 || skipped_seqs_buf_size > msglen);
+    assert(replaybuf_size == 0 || replaybuf_size > msglen);
     assert(msglen > rows * cols);
 
-    if (skipped_seqs_buf_size < msglen) skipped_seqs_buf = NULL;
+    if (replaybuf_size < msglen) replaybuf = NULL;
 
     // Offset is rows * cols plus all chars in each ANSI escape seq.
     size_t offset = rows * cols;
-    size_t i_msg = 0, i_seqs = 0, vischars = 0;
+    size_t i_msg = 0, i_rebuf = 0, vischars = 0;
     while (vischars < rows * cols) {
         // If we reach the end of the message without finding enough visible
         // chars, then either this function or its caller messed up some math.
@@ -757,8 +802,8 @@ static size_t calc_screen_offset(
         // If we're not crashing from this, count the last char and tell the 
         // caller it all should fit.
         if (i_msg >= msglen) {
-            if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
-            if (msg[i_msg] >= ' ') vischars++;
+            if (replaybuf != NULL) replaybuf[0] = '\0';
+            if ((unsigned char) msg[i_msg] >= ' ') vischars++;
             if (n_visible_chars != NULL) *n_visible_chars = vischars;
             return 0;
         }
@@ -773,18 +818,18 @@ static size_t calc_screen_offset(
         if (msg[i_msg] == ESC[0]) {
             while (msg[i_msg] != 'm') {
                 offset++;
-                if (skipped_seqs_buf != NULL)
-                    skipped_seqs_buf[i_seqs++] = msg[i_msg];
+                if (replaybuf != NULL)
+                    replaybuf[i_rebuf++] = msg[i_msg];
                 i_msg++;
 
-                if (msg[i_msg] < ' ') 
+                if ((unsigned char) msg[i_msg] < ' ') 
                     log_fmt(LOGLEVEL_ERROR,
                             "[%s] Ctrl char in ASCII seq at index %zu: (%d)\n"
                             "Msg: '%s'",
                             logpfx, i_msg, (int)msg[i_msg], msg);
 
                 // Within an ANSI escape, we do not expect control characters.
-                assert(msg[i_msg] >= ' ');
+                assert((unsigned char) msg[i_msg] >= ' ');
 
                 if (i_msg >= msglen) {
                     log_fmt(LOGLEVEL_ERROR, "[%s] Reached end of string while "
@@ -795,19 +840,53 @@ static size_t calc_screen_offset(
                     assert(i_msg < msglen);
 
                     if (n_visible_chars != NULL) *n_visible_chars = vischars;
-                    if (skipped_seqs_buf != NULL) skipped_seqs_buf[0] = '\0';
+                    if (replaybuf != NULL) replaybuf[0] = '\0';
                     return 0;
                 }
             }
-            if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs++] = 'm';
+            if (replaybuf != NULL) replaybuf[i_rebuf++] = 'm';
             offset++;
         } 
-        else if (msg[i_msg] >= ' ') vischars++; 
-        else offset++; // TODO: do we need to replay IRC formatters too?
+        else if (msg[i_msg] == IRC_FMT_COLOR) {
+            // Advance i_search to the last index of the color sequence.
+            size_t i_search = i_msg;
+            if (is_digit(msg[i_search + 1])) {
+                i_search++;
+                if (is_digit(msg[i_search + 1])) i_search++;
+
+                // Comma is only a delim if the next char is a digit.
+                if (msg[i_search + 1] == ',' && is_digit(msg[i_search + 2]))
+                    i_search += is_digit(msg[i_search + 3]) ? 3 : 2;
+            }
+            offset += i_search - i_msg + 1;
+
+            assert(replaybuf == NULL ||
+                    i_rebuf + (i_search - i_msg) < replaybuf_size);
+            if (replaybuf != NULL) replaybuf[i_rebuf++] = msg[i_msg];
+            while (i_msg < i_search) {
+                i_msg++;
+                if (replaybuf != NULL) replaybuf[i_rebuf++] = msg[i_msg];
+            }
+        }
+        else if (strchr(irc_ctrl_chars, msg[i_msg]) != NULL) {
+            // TODO: handle 0x04 for HEX color...
+            if (replaybuf != NULL) replaybuf[i_rebuf++] = msg[i_msg];
+            offset++;
+        }
+        else {
+            // Unsigned is critical here; extended ASCII chars are common and
+            // evaluate negative as signed chars, but they are printable!
+            unsigned char c = msg[i_msg];
+            if (c >= ' ') {
+                vischars++;
+            } else {
+                offset++;
+            }
+        }
         i_msg++;
     }
     if (n_visible_chars != NULL) *n_visible_chars = vischars;
-    if (skipped_seqs_buf != NULL) skipped_seqs_buf[i_seqs] = '\0';
+    if (replaybuf != NULL) replaybuf[i_rebuf] = '\0';
     return offset;
 }
 

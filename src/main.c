@@ -280,10 +280,11 @@ int main(int argc, char* argv[]) {
             ircmsg *ircm = msgutils_ircmsg_parse(curr_msgnode->msg);
             curr_msgnode = curr_msgnode->next;
             if (ircm == NULL) continue;
-            
+ 
             handle_ircmsg(ircm, timestamp_buf);
             msgutils_ircmsg_free(ircm);
         }
+ 
         msglist_free(&msgs_in);
 
         // UI msgs

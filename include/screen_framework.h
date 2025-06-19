@@ -52,3 +52,27 @@ void screen_pushmsg_take(screen_id scrid, char *const msg);
 // that will fit in the specified number of rows and columns to the global
 // screen buffer.
 int screen_fmt_to_buf(char *buf, size_t buflen, int buf_rows, int term_cols);
+
+// Prints the details of every character in 'msg', showing its index, unsigned
+// hex value, and printing the character. If the character is non-printable, a
+// space is printed and a tilde (~) is placed after the entry to signify that
+// it's not an actual space character. Each entry is exactly the same width so
+// they line up and are easy to read/scan through. The index and hex value are
+// gray, while the character itself is red and bold.
+// After printing 'msg', the results of a call to 'calc_screen_offset()' with
+// the provided rows/cols args are displayed, and the replay buffer is printed
+// similarly to the 'msg' buffer.
+// This function is extremely useful for detecting problems with control 
+// character counting and parsing. You can send the populated buffer to the
+// logger to print, or pass it to somewhere with access to an output file handle
+// to write yourself.
+// WARNINGS:
+//      * This function prints a lot of characters, so pass it a big buffer, and
+//        don't print the results in a tight loop. It should be called ad-hoc,
+//        not once per frame.
+//      * The asserts in calc_screen_offset() will fire if the message is large
+//        enough to fit entirely in the rows and cols you provide.
+size_t screen_DEBUG_char_details_buf(
+        char *buf, const_str msg, size_t bufsize,
+        size_t entries_per_row,
+        size_t offset_calc_rows, size_t offset_calc_cols);
