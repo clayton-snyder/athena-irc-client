@@ -10,19 +10,16 @@
 #include <windows.h> // TODO: REMOVe WHEN DONE WITH UNREFERENCED_PARAMETER()
 
 #define SCREEN_ID_HOME 0
+#define N_SCRSLOTS 8
 #define SCREEN_DISPLAY_TEXT_MAXLEN 1024
 
 // ANSI escape character used to signal the beginning of a formatting sequence.
 #define ESC "\033"
 
-// Bell/alert and backspace are not disallowed by the protocol, but I'd like to
-// know if they come through.
-// Null term, bell/alert, backspace, LF, CR
-#define CONCERNING_CHARS "\0\007\010\012\015"
+#define DEFAULT_PROMPT "> "
 
 // This is just a string holder. Timestamp, author info, formatting, etc. should
-// all be interpolated into the string already. 'msg' will be copied directly 
-// into the screen buffer.
+// all be interpolated into the string already. 
 typedef struct screenlog_node {
     char *msg;
     struct screenlog_node *prev;
@@ -37,38 +34,11 @@ typedef struct screenlog_list {
     int max_size_bytes;
 } screenlog_list;
 
-typedef enum screentype {
-    SCREENTYPE_HOME,
-    SCREENTYPE_CHANNEL_LIST,
-    SCREENTYPE_CHANNEL,
-    SCREENTYPE_USER_PM,
-} screentype;
-
-// TODO: does channel belong in screen_framework?
-// TODO: re-eval this. bitfield is possible if necessary
-// TODO: lookup 
-typedef enum channel_user_state { 
-    CHANNEL_USER_STATE_NEVER,
-    CHANNEL_USER_STATE_JOINED,
-    CHANNEL_USER_STATE_PARTED,
-    CHANNEL_USER_STATE_KICKED,
-    CHANNEL_USER_STATE_BANNED,
-} channel_user_state;
-
-// TODO: does channel belong in screen_framework?
-typedef struct channel {
-    char *identifier; // E.g., "#testchannel". TODO: can this be fixed size?
-    channel_user_state state;
-} channel;
-
 typedef struct screen {
-    screentype type;
     char display_text[SCREEN_DISPLAY_TEXT_MAXLEN];
-    screen_id id;
     screenlog_list scrlog;
     screen_ui_state ui_state;
-    // NULL if type is not SCREENTYPE_CHANNEL
-    channel *channel_maybe;
+    char name[CHANNEL_NAME_MAXLEN];
 } screen;
 
 typedef struct format_toggles {
@@ -78,20 +48,16 @@ typedef struct format_toggles {
     bool striketh;
 } format_toggles;
 
-// Monotonically increasing counter for assigning screen IDs.
-static screen_id s_screen_id_counter = SCREEN_ID_HOME + 1;
 
-// Used to hold the skipped ANSI escape sequences for formatting when printing
-// a partial wrapped message so they can be replayed in order.
-static char s_replaybuf[SCREENMSG_BUF_SIZE] = { 0 };
+/************************ INTERNAL SCR MGMT **********************************/
+// Returns -1 if the name was not found.
+static int internal__find_screen_by_name(const_str find_name);
+static void internal__create_screen_at(size_t i_scr, const_str name);
+static int internal__find_open_slot(void);
+static int internal__find_screen(const_str find_name);
 
-// Call this to get an ID for a new screen. This function will not return the
-// same ID twice, but may collide with any manually assigned screen IDs. Don't
-// manually assign screen IDs!
-static screen_id get_next_screen_id(void);
 
-// Utility functions for formatting a scrlog to a rowsXcols screen.
-
+/************************** BUF FMT UTILITIES ********************************/
 static void format_toggles_clear(format_toggles *const toggles);
 static bool is_digit(char c);
 
@@ -128,24 +94,10 @@ static size_t translate_src_char_to_buf(
 static int num_lines(char *msg, int cols);
 static size_t strlen_on_screen(const char *msg);
 
-static screen s_scr_home = {
-    .type = SCREENTYPE_HOME,
-    .display_text = {"Not Connected"},
-    .id = SCREEN_ID_HOME,
-    .scrlog = { .max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES },
-    .ui_state = {
-        .prompt = "> ",
-        .inputbuf = {0}, 
-        .i_inputbuf = 0,
-        .scroll = 0,
-        .scroll_at_top = true
-    },
-    .channel_maybe = NULL
-};
-
-static screen *s_scr_active = &s_scr_home;
 
 
+
+/********************* INTERNAL SCREENLOG API ********************************/
 // This is extremely costly because it traverses the entire list twice (forward
 // and backward). Only for use validating the screenlog list code during dev.
 static void DEBUG_validate_screenlog_list(const screenlog_list *const scrlog);
@@ -165,13 +117,31 @@ static void screenlog_evict_min_to_free(
         screenlog_list *const scrlog, int free_bytes);
 
 
+/***************************** STATIC VARS ***********************************/
+static screen s_scr_home = {
+    .display_text = {"Not Connected"},
+    .scrlog = { .max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES },
+    .ui_state = {
+        .prompt = "> ",
+        .inputbuf = {0}, 
+        .i_inputbuf = 0,
+        .scroll = 0,
+        .scroll_at_top = true
+    },
+    .name = "home"
+};
+
+static screen* s_scrslots[N_SCRSLOTS] = { &s_scr_home };
+
+static screen *s_scr_active = &s_scr_home;
+
+// Used for capturing the skipped ANSI escape sequences for formatting when 
+// printing a partial wrapped message so they can be replayed in order.
+static char s_replaybuf[SCREENMSG_BUF_SIZE] = { 0 };
+
 
 /*****************************************************************************/
-/******************************* INTERNAL IMPLs ******************************/
-
-static screen_id get_next_screen_id(void) {
-    return s_screen_id_counter++;
-}
+/****************************** SCREENLOG IMPLs ******************************/
 
 static void screenlog_push_copy(screenlog_list *const scrlog, const_str msg) {
     assert(scrlog != NULL);
@@ -353,40 +323,86 @@ static void DEBUG_validate_screenlog_list(const screenlog_list *const scrlog) {
 
 
 /*****************************************************************************/
-/********************************* API IMPLs *********************************/
+/***************************** PUB API IMPLs *********************************/
+bool scrmgr_create_or_switch(const_str channel_name) {
+    int i_scr = internal__find_screen(channel_name);
+    assert(i_scr >= -1);
+    assert(i_scr < N_SCRSLOTS);
 
-screen_id screen_getid_home(void) {
-    return s_scr_home.id;
+    if (i_scr == -1) {
+        i_scr = internal__find_open_slot();
+        assert(i_scr >= -1);
+        assert(i_scr < N_SCRSLOTS);
+
+        // No available slots
+        if (i_scr == -1) return false;
+
+        internal__create_screen_at(i_scr, channel_name);
+    }
+
+    s_scr_active = s_scrslots[i_scr];
+
+    return true;
 }
 
-screen_id screen_getid_active(void) {
-    return s_scr_active->id;
+void scrmgr_deliver_copy(const_str deliver_to, const_str msg) {
+    int i_scr = internal__find_screen(deliver_to);
+    assert(i_scr >= -1);
+    assert(i_scr < N_SCRSLOTS);
+
+    if (i_scr == -1) screenlog_push_copy(&s_scr_home.scrlog, msg);
+    else screenlog_push_copy(&s_scrslots[i_scr]->scrlog, msg);
 }
 
-screen_ui_state *const screen_get_active_ui_state(void) {
+screen_ui_state *const scrmgr_get_active_ui_state(void) {
     return &s_scr_active->ui_state;
 }
 
-// bool screen_set_active(screen_id scrid) {
-//     // Look up scrid in array.
-//     // If active, return true
-//     // If doesn't exist, return false
-//     // Update s_scr_active to point at screen in arr[scrid]
-//     // HOW DO WE UPDATE THE UI?
-// }
-
-void screen_pushmsg_copy(screen_id scrid, const_str msg) {
-    UNREFERENCED_PARAMETER(scrid);
-    // TODO: look up the screen first!
-    screenlog_push_copy(&s_scr_active->scrlog, msg); 
+const_str scrmgr_get_active_name(void) {
+    return s_scr_active->name;
 }
 
-void screen_pushmsg_take(screen_id scrid, char *const msg) {
-    UNREFERENCED_PARAMETER(scrid);
-    // TODO: look up the screen first!
-    screenlog_push_take(&s_scr_active->scrlog, msg);
+
+/*****************************************************************************/
+/*********************** INTERNAL SCR MGMT IMPLs *****************************/
+
+static void internal__create_screen_at(size_t i_scr, const_str name) {
+    assert(i_scr < N_SCRSLOTS);
+    assert(s_scrslots[i_scr] == NULL);
+
+    // TODO: check memory
+    screen *new_screen = (screen *) calloc(1, sizeof(screen));
+    strcpy_s(new_screen->name, sizeof(new_screen->name), name);
+    new_screen->scrlog.max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES;
+    new_screen->ui_state.prompt = DEFAULT_PROMPT;
+
+    s_scrslots[i_scr] = new_screen;
 }
 
+static int internal__find_open_slot(void) {
+    for (int i = 0; i < N_SCRSLOTS; i++)
+        if ((s_scrslots[i]) == NULL) return i;
+    return -1;
+}
+
+static int internal__find_screen(const_str find_name) {
+    int i_found = -1, i_scr = 0;
+    while (i_scr < N_SCRSLOTS && i_found == -1) {
+        if (s_scrslots[i_scr] == NULL || s_scrslots[i_scr]->name == NULL) {
+            i_scr++;
+            continue;
+        }
+        if (strcmp(s_scrslots[i_scr]->name, find_name) == 0)
+            i_found = i_scr;
+
+        i_scr++;
+    }
+    return i_found;
+}
+
+
+/*****************************************************************************/
+/***************************** PUB FMT API ***********************************/
 int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     assert(buf != NULL);
     assert(s_scr_active != NULL);
@@ -397,6 +413,7 @@ int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     screenlog_list list = s_scr_active->scrlog;
     if (list.head == NULL) {
         assert(list.tail == NULL);
+        buf[0] = '\0';
         return 0;
     }
 
@@ -573,7 +590,7 @@ size_t screen_DEBUG_char_details_buf(
 }
 
 /*****************************************************************************/
-/******************************* INTERNAL UTIL *******************************/
+/*************************** INTERNAL FMT UTIL *******************************/
 
 #define IRC_FMT_BOLD 0x02
 #define IRC_FMT_ITALIC 0x1D

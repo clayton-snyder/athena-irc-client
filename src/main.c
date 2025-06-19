@@ -37,6 +37,7 @@
 // Usually it will just be the time, though.
 #define TIMESTAMP_BUFF_SIZE 20
 
+// TODO: remove these when this stuff is moved into handlers
 #define MAX_NICK_LEN 9
 #define MAX_CHANNEL_NAME_LEN 50
 
@@ -208,12 +209,12 @@ int main(int argc, char* argv[]) {
     // TODO: tell server we're not capable of processing tags
     char cmdbuf_nick[MAX_NICK_LEN + 7 + 1];
     sprintf_s(cmdbuf_nick, sizeof(cmdbuf_nick), "NICK %s\r\n", nick);
-    char cmdbuf_join[MAX_CHANNEL_NAME_LEN + 7 + 1];
-    sprintf_s(cmdbuf_join, sizeof(cmdbuf_join), "JOIN %s\r\n", channel);
+//     char cmdbuf_join[MAX_CHANNEL_NAME_LEN + 7 + 1];
+//     sprintf_s(cmdbuf_join, sizeof(cmdbuf_join), "JOIN %s\r\n", channel);
     const char *send_buff[] = {
         cmdbuf_nick,
-        "USER ircC 0 * :AthenaIRC Client\r\n",
-        cmdbuf_join
+        "USER ircC 0 * :AthenaIRC Client\r\n"
+//         cmdbuf_join
     };
 
     for (int i = 0; i < sizeof(send_buff) / sizeof(const char*); i++) {
@@ -326,7 +327,7 @@ int main(int argc, char* argv[]) {
             assert(msg != NULL);
             curr_msgnode = curr_msgnode->next;
 
-            bye = handle_user_command(msg, nick, channel, sock, timestamp_buf);
+            bye = handle_user_command(msg, nick, sock, timestamp_buf);
             if (bye) break;
         }
         msglist_free(&msgs_ui);
@@ -373,7 +374,7 @@ int main(int argc, char* argv[]) {
 // TODO: platform-specific code
 static bool process_console_input(HANDLE h_stdin) {
     bool user_quit = false;
-    screen_ui_state *const st = screen_get_active_ui_state();
+    screen_ui_state *const st = scrmgr_get_active_ui_state();
     assert(st != NULL);
 
     // ReadConsoleInput blocks until it reads at least one input event, so we 
@@ -433,7 +434,7 @@ static void draw_screen(HANDLE h_stdout,
         char *screenbuf, size_t screenbuf_size,
         char *statbuf, size_t statbuf_size)
 {
-    screen_ui_state *const st = screen_get_active_ui_state();
+    screen_ui_state *const st = scrmgr_get_active_ui_state();
     assert(st != NULL);
 
     CONSOLE_SCREEN_BUFFER_INFO csbi;

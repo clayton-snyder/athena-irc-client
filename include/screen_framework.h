@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+// Includes prefix
+#define CHANNEL_NAME_MAXLEN 50
+
 // 511 bytes for the message + metadata (timestamp, author) + ANSI escapes
 // for formatting. 1024 is generous, but these should get re-used.
 #define SCREENMSG_BUF_SIZE 1024
@@ -27,26 +30,17 @@ typedef struct screen_ui_state {
     bool scroll_at_top;
 } screen_ui_state;
 
-typedef unsigned int screen_id;
+// TODO: re-eval if this is correct API
+bool scrmgr_create_or_switch(const_str channel_name);
 
-screen_id screen_getid_home(void);
-
-screen_id screen_getid_active(void);
+// 'deliver_to' is the name of the screen (i.e., "#channel" or "home").
+void scrmgr_deliver_copy(const_str deliver_to, const_str msg);
 
 // Only the active screen's UI state can be accessed. This could be changed, but
 // I'll wait until there's a use case.
-screen_ui_state *const screen_get_active_ui_state(void);
+screen_ui_state *const scrmgr_get_active_ui_state(void);
 
-// bool screen_set_active(screen_id scrid);
-
-// Copies the provided string for use in the new log entry. Use if you need your
-// string after calling this or if passing a stack-allocated char[].
-void screen_pushmsg_copy(screen_id scrid, const_str msg);
-
-// Passes ownership of the provided string to the screenlog_list, which will 
-// free it when appropriate. Callers should not free the string, continue
-// accessing the string after passing, or pass a stack-allocated char[].
-void screen_pushmsg_take(screen_id scrid, char *const msg);
+const_str scrmgr_get_active_name(void);
 
 // Writes the section (according to scroll) of the active screen's message log
 // that will fit in the specified number of rows and columns to the global

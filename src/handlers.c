@@ -22,6 +22,8 @@
 // prepare messages to pass to send_as_irc().
 #define MAX_CMD_LEN 510
 
+#define CHANNEL_PREFIXES "&#+!"
+
 // Use this to allocate buffers that will be sent to the IRC server. The two 
 // extra bytes are reserved for CR and LF.
 #define IRC_MSG_BUF_LEN (MAX_CMD_LEN + 2)
@@ -39,6 +41,7 @@ static bool screenfmt_privmsg(char *const buf, size_t bufsize,
 
 // Local command handlers
 static void handle_localcmd_channel(char *msg, SOCKET sock);
+static void handle_localcmd_join(char *msg, SOCKET sock);
 
 // Utilities
 static int send_as_irc(SOCKET sock, const char* msg);
@@ -79,7 +82,7 @@ static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts) {
               "handle_ircmsg_default()", ircm->command, ircm->params.count, ts);
     }
     else {
-        screen_pushmsg_copy(screen_getid_home(), s_scrbuf);       
+        scrmgr_deliver_copy("home", s_scrbuf);
     }
     
     return success;
@@ -104,9 +107,7 @@ static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
              "msg='%s', ts='%s'", "handle_ircmsg_privmsg()", from, to, msg, ts);
     }
     else {
-        // TODO: Actually you need to find the appropriate screen based on the
-        // source or "to" param. Probably need a screen_search option.
-        screen_pushmsg_copy(screen_getid_active(), s_scrbuf);       
+        scrmgr_deliver_copy(to, s_scrbuf);
     }
     
     if (bang != NULL) *bang = '!'; // TODO: do we really need this?
@@ -224,15 +225,14 @@ static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
 // Returns true if program should exit.
 // TODO: Remove nick and channel params. Access those from a query or state
 // struct when needed
-bool handle_user_command(char *msg, const_str nick, const_str channel,
-        SOCKET sock, const_str ts) {
+bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
     
     if (strcmp(msg, "BYE") == 0) {
         try_send_as_irc(sock, "QUIT");
-        screen_pushmsg_copy(screen_getid_active(), "Disconnecting...");
+        scrmgr_deliver_copy("home", "Disconnecting...");
         return true;
     }
 
@@ -242,6 +242,8 @@ bool handle_user_command(char *msg, const_str nick, const_str channel,
         // ! indicates an internal client command.
         if (strut_startswith(msg, "!channel ") || strcmp(msg, "!channel") == 0)
             handle_localcmd_channel(msg, sock);
+        if (strut_startswith(msg, "!join ") || strcmp(msg, "!join") == 0)
+            handle_localcmd_join(msg, sock);
         break;
     case '`':
         // TODO: Do we want to send this to a screenlog?
@@ -256,9 +258,9 @@ bool handle_user_command(char *msg, const_str nick, const_str channel,
         // to JOIN it).
         // if active_screen is a CHANNEL...
         // TODO: send to active_screen screenlog
-        
-        bool send_success =
-            try_send_as_irc(sock, "PRIVMSG %s :%s", channel, msg);
+        const_str active_name = scrmgr_get_active_name();
+        bool send_success = try_send_as_irc(
+                sock, "PRIVMSG %s :%s", active_name, msg);
         
         bool fmt_success = false;
         if (send_success)
@@ -272,22 +274,16 @@ bool handle_user_command(char *msg, const_str nick, const_str channel,
             log_fmt(LOGLEVEL_ERROR, "[%s] Couldn't screenfmt privmsg. "
                     "nick='%s', msg='%s', ts='%s'", "handle_ircmsg_privmsg()",
                     nick, msg, ts);
-            // TODO: Review this behavior. DEV only? Also send to right screen,
-            // not just active
-            screen_pushmsg_copy(screen_getid_active(), "<corrupted message>");
+            scrmgr_deliver_copy(active_name, "<corrupted message>");
         }
         else {
-            // TODO: Actually you need to find the appropriate screen based on
-            // the source or "to" param. Probably need a screen_search option.
-            screen_pushmsg_copy(screen_getid_active(), s_scrbuf);       
+            scrmgr_deliver_copy(active_name, s_scrbuf);
         }
-        // else if active_screen is a CHANNEL_LIST...
-
     }
     return false;
 }
 
-void handle_localcmd_channel(char *msg, SOCKET sock) {
+static void handle_localcmd_channel(char *msg, SOCKET sock) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
 
@@ -340,7 +336,36 @@ void handle_localcmd_channel(char *msg, SOCKET sock) {
     log_fmt(LOGLEVEL_DEV, "Performed !channel %s", tk_action ? tk_action : "");
 }
 
+static void handle_localcmd_join(char *msg, SOCKET sock) {
+    assert(msg != NULL);
+    assert(sock != INVALID_SOCKET);
 
+    const_str delim = " ";
+    char *next_tk;
+    char *const tk_cmd = strtok_s(msg, delim, &next_tk);
+    assert(strcmp(tk_cmd, "!join") == 0);
+    char *const tk_channel = strtok_s(NULL, delim, &next_tk);
+    if (tk_channel == NULL) {
+        // TODO: command feedback channel?
+        return;
+    }
+    if (strchr(CHANNEL_PREFIXES, tk_channel[0]) == NULL) {
+        // TODO: command feedback channel?
+        return;
+    }
+    size_t tk_channel_len = strlen(tk_channel);
+    if (tk_channel_len > CHANNEL_NAME_MAXLEN) {
+        // TODO: command feedback channel?
+        return;
+    }
+    // TODO: check for invalid chars
+    bool sent = try_send_as_irc(sock, "JOIN %s", tk_channel);
+    if (!sent) {
+        log(LOGLEVEL_ERROR, "[handle_localcmd_join] try_send_as_irc() failed.");
+        return;
+    }
+    scrmgr_create_or_switch(tk_channel);
+}
 
 /*****************************************************************************/
 /***************************** UTIL IMPLs ************************************/
