@@ -42,6 +42,7 @@ static bool screenfmt_privmsg(char *const buf, size_t bufsize,
 // Local command handlers
 static void handle_localcmd_channel(char *msg, SOCKET sock);
 static void handle_localcmd_join(char *msg, SOCKET sock);
+static void handle_localcmd_show(char *msg);
 
 // Utilities
 static int send_as_irc(SOCKET sock, const char* msg);
@@ -228,7 +229,7 @@ static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
 bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
-    log_fmt(LOGLEVEL_DEV, "[handle_local_command()] Processing '%s'", msg);
+    log_fmt(LOGLEVEL_DEV, "[handle_user_command()] Processing '%s'", msg);
     
     if (strcmp(msg, "BYE") == 0) {
         try_send_as_irc(sock, "QUIT");
@@ -244,6 +245,8 @@ bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
             handle_localcmd_channel(msg, sock);
         if (strut_startswith(msg, "!join ") || strcmp(msg, "!join") == 0)
             handle_localcmd_join(msg, sock);
+        if (strut_startswith(msg, "!show ") || strcmp(msg, "!show") == 0)
+            handle_localcmd_show(msg);
         break;
     case '`':
         // TODO: Do we want to send this to a screenlog?
@@ -334,6 +337,42 @@ static void handle_localcmd_channel(char *msg, SOCKET sock) {
     }
     // TODO: other !channel actions
     log_fmt(LOGLEVEL_DEV, "Performed !channel %s", tk_action ? tk_action : "");
+}
+
+static void handle_localcmd_show(char *msg) {
+    assert(msg != NULL);
+
+    const_str delim = " ";
+    char *next_tk;
+    const_str tk_cmd = strtok_s(msg, delim, &next_tk);
+    assert(strcmp(tk_cmd, "!show") == 0 || strcmp(tk_cmd, "!s") == 0);
+    const_str tk_screen = strtok_s(NULL, delim, &next_tk);
+    if (tk_screen == NULL) {
+        // TODO: command feedback
+        return;
+    }
+
+    size_t tk_screen_len = strlen(tk_screen);
+    if (tk_screen_len == 0) {
+        // TODO: command feedback
+        return;
+    }
+    else if (tk_screen_len == 1 && isdigit(tk_screen[0])) {
+        int i_scr = strut_ctoi(tk_screen[0]);
+        assert(i_scr >= 0 && i_scr <= 9);
+        if (!scrmgr_show_index(i_scr)) {
+            // TODO: command feedback
+            log_fmt(LOGLEVEL_WARNING, "'!show %s' did nothing because there is "
+                    "no screen %d.", tk_screen, i_scr);
+        }
+        return;
+    }
+
+    if (!scrmgr_show_name_startswith(tk_screen)) {
+        // TODO: command feedback
+        log_fmt(LOGLEVEL_WARNING, "'!show %s' did nothing because no screen "
+                "whose name starts with '%s' exists.", tk_screen, tk_screen);
+    }
 }
 
 static void handle_localcmd_join(char *msg, SOCKET sock) {

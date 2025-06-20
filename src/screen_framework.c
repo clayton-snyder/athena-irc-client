@@ -1,6 +1,7 @@
 #include "screen_framework.h"
 
 #include "log.h"
+#include "stringutils.h"
 #include "terminalutils.h"
 
 #include <assert.h>
@@ -55,6 +56,7 @@ static int internal__find_screen_by_name(const_str find_name);
 static void internal__create_screen_at(size_t i_scr, const_str name);
 static int internal__find_open_slot(void);
 static int internal__find_screen(const_str find_name);
+static int internal__find_screen_startswith(const_str prefix);
 
 
 /************************** BUF FMT UTILITIES ********************************/
@@ -362,6 +364,48 @@ const_str scrmgr_get_active_name(void) {
     return s_scr_active->name;
 }
 
+bool scrmgr_show_index(int i_scr) {
+    if (i_scr < 0 || i_scr >= N_SCRSLOTS) {
+        log_fmt(LOGLEVEL_ERROR, "[scrmgr_show_index] Invalid index: %d", i_scr);
+        return false;
+    }
+    if (s_scrslots[i_scr] == NULL) {
+        log_fmt(LOGLEVEL_WARNING, "[scrmgr_show_index] Tried to show slot %d "
+                "but there is no screen there.", i_scr);
+        return false;
+    }
+
+    s_scr_active = s_scrslots[i_scr];
+    return true;
+}
+
+bool scrmgr_show_name(const_str scr_name) {
+    assert(scr_name != NULL);
+
+    int i_scr = internal__find_screen(scr_name);
+    if (i_scr < 0) {
+        log_fmt(LOGLEVEL_WARNING,
+                "[scrmgr_show_name] No screen with name '%s'.", scr_name);
+        return false;
+    }
+    assert(i_scr < N_SCRSLOTS);
+
+    return scrmgr_show_index(i_scr);
+}
+
+bool scrmgr_show_name_startswith(const_str prefix) {
+    assert(prefix != NULL);
+
+    int i_scr = internal__find_screen_startswith(prefix);
+    if (i_scr < 0) {
+        log_fmt(LOGLEVEL_WARNING, "[scrmgr_show_name] No screen with name that "
+                "starts with '%s'.", prefix);
+        return false;
+    }
+    assert(i_scr < N_SCRSLOTS);
+
+    return scrmgr_show_index(i_scr);
+}
 
 /*****************************************************************************/
 /*********************** INTERNAL SCR MGMT IMPLs *****************************/
@@ -388,11 +432,12 @@ static int internal__find_open_slot(void) {
 static int internal__find_screen(const_str find_name) {
     int i_found = -1, i_scr = 0;
     while (i_scr < N_SCRSLOTS && i_found == -1) {
-        if (s_scrslots[i_scr] == NULL || s_scrslots[i_scr]->name == NULL) {
+        if (s_scrslots[i_scr] == NULL) {
+            assert(s_scrslots[i_scr]->name != NULL);
             i_scr++;
             continue;
         }
-        if (strcmp(s_scrslots[i_scr]->name, find_name) == 0)
+        if (strut_strcmpi(s_scrslots[i_scr]->name, find_name) == 0)
             i_found = i_scr;
 
         i_scr++;
@@ -400,6 +445,21 @@ static int internal__find_screen(const_str find_name) {
     return i_found;
 }
 
+static int internal__find_screen_startswith(const_str prefix) {
+    int i_found = -1, i_scr = 0;
+    while (i_scr < N_SCRSLOTS && i_found == -1) {
+        if (s_scrslots[i_scr] == NULL) {
+            assert(s_scrslots[i_scr]->name != NULL);
+            i_scr++;
+            continue;
+        }
+        if (strut_startswithi(s_scrslots[i_scr]->name, prefix))
+            i_found = i_scr;
+
+        i_scr++;
+    }
+    return i_found;
+}
 
 /*****************************************************************************/
 /***************************** PUB FMT API ***********************************/

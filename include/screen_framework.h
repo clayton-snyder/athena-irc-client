@@ -42,6 +42,17 @@ screen_ui_state *const scrmgr_get_active_ui_state(void);
 
 const_str scrmgr_get_active_name(void);
 
+// Returns false if there is no screen in that index
+bool scrmgr_show_index(int i_scr);
+
+// Sets as active the first screen whose name matches 'scr_name',
+// case-insensitive. Returns false if there are no matches.
+bool scrmgr_show_name(const_str scr_name);
+
+// Sets as active the first screen whose name starts with 'prefix',
+// case-insensitive. Returns false if there are no matches.
+bool scrmgr_show_name_startswith(const_str prefix);
+
 // Writes the section (according to scroll) of the active screen's message log
 // that will fit in the specified number of rows and columns to the global
 // screen buffer.
