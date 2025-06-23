@@ -443,9 +443,11 @@ static void draw_screen(HANDLE h_stdout,
     int term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     int term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-    int stats_len = sprintf_s(statbuf, statbuf_size,
-            "%dx%d  scr:%d",
-            term_rows, term_cols, st->scroll);
+//     int stats_len = sprintf_s(statbuf, statbuf_size,
+//             "%dx%d  scr:%d",
+//             term_rows, term_cols, st->scroll);
+//  TODO: rename to match tabs
+    int stats_len = screen_fmt_tabs(statbuf, statbuf_size, term_cols);
 
     int rows_statline = stats_len / term_cols + 1;
     int rows_uiline = (strlen(st->prompt) + st->i_inputbuf - 1) / term_cols + 1;

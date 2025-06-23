@@ -40,6 +40,7 @@ typedef struct screen {
     screenlog_list scrlog;
     screen_ui_state ui_state;
     char name[CHANNEL_NAME_MAXLEN];
+    bool unread;
 } screen;
 
 typedef struct format_toggles {
@@ -53,6 +54,7 @@ typedef struct format_toggles {
 /************************ INTERNAL SCR MGMT **********************************/
 // Returns -1 if the name was not found.
 static int internal__find_screen_by_name(const_str find_name);
+static void internal__set_active(size_t i_scr);
 static void internal__create_screen_at(size_t i_scr, const_str name);
 static int internal__find_open_slot(void);
 static int internal__find_screen(const_str find_name);
@@ -130,7 +132,8 @@ static screen s_scr_home = {
         .scroll = 0,
         .scroll_at_top = true
     },
-    .name = "home"
+    .name = "home",
+    .unread = false
 };
 
 static screen* s_scrslots[N_SCRSLOTS] = { &s_scr_home };
@@ -342,18 +345,20 @@ bool scrmgr_create_or_switch(const_str channel_name) {
         internal__create_screen_at(i_scr, channel_name);
     }
 
-    s_scr_active = s_scrslots[i_scr];
+    internal__set_active(i_scr);
 
     return true;
 }
 
-void scrmgr_deliver_copy(const_str deliver_to, const_str msg) {
-    int i_scr = internal__find_screen(deliver_to);
+void scrmgr_deliver_copy(const_str deliver_to_name, const_str msg) {
+    int i_scr = internal__find_screen(deliver_to_name);
     assert(i_scr >= -1);
     assert(i_scr < N_SCRSLOTS);
 
-    if (i_scr == -1) screenlog_push_copy(&s_scr_home.scrlog, msg);
-    else screenlog_push_copy(&s_scrslots[i_scr]->scrlog, msg);
+    screen *const deliver_scr = (i_scr != -1 ? s_scrslots[i_scr] : &s_scr_home);
+    screenlog_push_copy(&deliver_scr->scrlog, msg);
+    
+    if (deliver_scr != s_scr_active) deliver_scr->unread = true;
 }
 
 screen_ui_state *const scrmgr_get_active_ui_state(void) {
@@ -375,7 +380,7 @@ bool scrmgr_show_index(int i_scr) {
         return false;
     }
 
-    s_scr_active = s_scrslots[i_scr];
+    internal__set_active(i_scr);
     return true;
 }
 
@@ -410,6 +415,11 @@ bool scrmgr_show_name_startswith(const_str prefix) {
 /*****************************************************************************/
 /*********************** INTERNAL SCR MGMT IMPLs *****************************/
 
+static void internal__set_active(size_t i_scr) {
+    s_scr_active = s_scrslots[i_scr];
+    s_scr_active->unread = false;
+}
+
 static void internal__create_screen_at(size_t i_scr, const_str name) {
     assert(i_scr < N_SCRSLOTS);
     assert(s_scrslots[i_scr] == NULL);
@@ -419,6 +429,7 @@ static void internal__create_screen_at(size_t i_scr, const_str name) {
     strcpy_s(new_screen->name, sizeof(new_screen->name), name);
     new_screen->scrlog.max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES;
     new_screen->ui_state.prompt = DEFAULT_PROMPT;
+    new_screen->unread = false;
 
     s_scrslots[i_scr] = new_screen;
 }
@@ -463,6 +474,52 @@ static int internal__find_screen_startswith(const_str prefix) {
 
 /*****************************************************************************/
 /***************************** PUB FMT API ***********************************/
+int screen_fmt_tabs(char *buf, size_t bufsize, int term_cols) {
+    UNREFERENCED_PARAMETER(term_cols);
+    // TODO: change formatting type for very small values of term_cols, down to
+    // just returning an empty string.
+    
+    // TODO: Calculate this based on term_cols. Can be step-function
+    size_t abbrev_over = 10;
+    size_t i_cutoff = abbrev_over - 3; // -1 to index, -2 for periods..
+    
+    size_t i_scr = 0, i_buf = 0;
+    while (s_scrslots[i_scr] != NULL) {
+        screen *const scr = s_scrslots[i_scr];
+        if (strlen(scr->name) <= abbrev_over) {
+            if (scr->unread)
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      "\033[1m %zu %s \033[22m|", i_scr, scr->name);
+            else if (scr == s_scr_active)
+                // TODO: parameterize statline bg color...
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      "\033[42m %zu %s \033[48;5;252m|", i_scr, scr->name);
+            else
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      " %zu %s |", i_scr, scr->name);
+        }
+        else {
+            char tmp = scr->name[i_cutoff];
+            scr->name[i_cutoff] = '\0';
+            if (scr->unread)
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      "\033[1m %zu %s..\033[22m |", i_scr, scr->name);
+            else if (scr == s_scr_active)
+                // TODO: parameterize statline bg color...
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      "\033[42m %zu %s.. \033[48;5;252m|", i_scr, scr->name);
+            else
+                i_buf += sprintf_s(buf + i_buf, bufsize - i_buf,
+                      " %zu %s.. |", i_scr, scr->name);
+            scr->name[i_cutoff] = tmp;
+        }
+
+        i_scr++;
+    }
+
+    return i_buf;
+}
+
 int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     assert(buf != NULL);
     assert(s_scr_active != NULL);
