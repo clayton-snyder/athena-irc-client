@@ -1,6 +1,8 @@
 > [!NOTE]
 > WIP
 
+Video demo: https://www.youtube.com/watch?v=lDbpvGbvSQs
+
 # AthenaIRC Client
 
 AthenaIRC is a console-based IRC client with a custom TUI (text user interface)
