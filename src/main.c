@@ -27,11 +27,11 @@
 // downside to severely overestimating this.
 // 512 columns, 128 rows, doubled for formatting space = 131kb
 // If you are displaying more text than that on a single screen, seek help.
-#define SCREEN_BUFF_SIZE 512 * 128 * 2
+#define SCREEN_BUF_SIZE 512 * 128 * 2
 
 // The status line is a single line across the top of the screen. Same logic as
 // screen buf on the size, but only for one line.
-#define STATLINE_BUFF_SIZE 512 * 2
+#define STATLINE_BUF_SIZE 512 * 2
 
 // Longest timestamp we'll write is: YYYY-MM-DD HH:MM:SS + \0.
 // Usually it will just be the time, though.
@@ -55,8 +55,9 @@ static bool process_console_input(HANDLE h_stdin);
 // log w/ scroll, input buffer, the global status status bar, etc., all within
 // the current terminal width/height.
 static void draw_screen(HANDLE h_stdout,
-        char *screenbuf, size_t screenbuf_size,
-        char *statbuf, size_t statbuf_size);
+        char *const screenbuf, size_t screenbuf_size,
+        char *const statbuf, size_t statbuf_size,
+        char *const headbuf, size_t headbuf_size);
 
 
 int main(int argc, char* argv[]) {
@@ -116,22 +117,7 @@ int main(int argc, char* argv[]) {
         nick = argv[4];
     }
 
-    const char *channel = "#codetest";
-    if (argc >= 6) {
-        if (strlen(argv[5]) > MAX_CHANNEL_NAME_LEN) {
-            log_fmt(LOGLEVEL_ERROR, "Invalid channel name '%s': can't be longer"
-                     " than %d characters.", argv[5], MAX_CHANNEL_NAME_LEN);
-            return 23;
-        }
-        if (strchr("&#+!", argv[5][0]) == NULL) {
-            log_fmt(LOGLEVEL_ERROR, "Invalid channel name '%s': must begin with"
-                    " one of '&', '#', '+', or '!'.", argv[5]);
-            return 23;
-        }
-        channel = argv[5];
-    }
-
-    bool utf8 = argc >= 7 && argv[6][0] != '0';
+    bool utf8 = argc >= 6 && argv[5][0] != '0';
 
 
     log(LOGLEVEL_INFO, "Ages ago, life was born in the primitive sea.");
@@ -163,7 +149,9 @@ int main(int argc, char* argv[]) {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
-    result = getaddrinfo(argv[1], argv[2], &hints, &addr_info);
+    char *const host = argv[1];
+    char *const port = argv[2];
+    result = getaddrinfo(host, port, &hints, &addr_info);
     if (result != 0) {
         log_fmt(LOGLEVEL_ERROR, "[main] getaddrinfo failed: %d", result);
         WSACleanup();
@@ -292,9 +280,20 @@ int main(int argc, char* argv[]) {
 
     if (utf8) log(LOGLEVEL_WARNING, "[main] Unicode enabled.");
 
+    char buf_hometopic[STATLINE_BUF_SIZE];
+// 0xF0 0x9F 0x9B 0x9C 
+    sprintf_s(
+          buf_hometopic, sizeof(buf_hometopic),
+//           "\033[1;32m\xF0\x9F\x9B\x9C"
+          "\033[1;32m🌐Connected\033[0m to \033[1m%s:%s\033[0m",
+          host, port);
+
+    scrmgr_set_topic("home", buf_hometopic);
+
     bool bye = false;
-    char drawbuf_screen[SCREEN_BUFF_SIZE] = { 0 };
-    char drawbuf_statline[STATLINE_BUFF_SIZE] = { 0 };
+    char drawbuf_screen[SCREEN_BUF_SIZE] = { 0 };
+    char drawbuf_statline[STATLINE_BUF_SIZE] = { 0 };
+    char drawbuf_header[STATLINE_BUF_SIZE] = { 0 };
 
     while (!bye) {
         char timestamp_buf[TIMESTAMP_BUFF_SIZE];
@@ -339,7 +338,8 @@ int main(int argc, char* argv[]) {
 
         draw_screen(h_stdout,
                 drawbuf_screen, sizeof(drawbuf_screen),
-                drawbuf_statline, sizeof(drawbuf_statline));
+                drawbuf_statline, sizeof(drawbuf_statline),
+                drawbuf_header, sizeof(drawbuf_header));
         
         fflush(logfile);
     }
@@ -431,8 +431,9 @@ static bool process_console_input(HANDLE h_stdin) {
 }
 
 static void draw_screen(HANDLE h_stdout,
-        char *screenbuf, size_t screenbuf_size,
-        char *statbuf, size_t statbuf_size)
+        char *const screenbuf, size_t screenbuf_size,
+        char *const statbuf, size_t statbuf_size,
+        char *const headbuf, size_t headbuf_size)
 {
     screen_ui_state *const st = scrmgr_get_active_ui_state();
     assert(st != NULL);
@@ -443,29 +444,32 @@ static void draw_screen(HANDLE h_stdout,
     int term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     int term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-//     int stats_len = sprintf_s(statbuf, statbuf_size,
+//     int tabs_len = sprintf_s(statbuf, statbuf_size,
 //             "%dx%d  scr:%d",
 //             term_rows, term_cols, st->scroll);
 //  TODO: rename to match tabs
-    int stats_len = screen_fmt_tabs(statbuf, statbuf_size, term_cols);
+    int tabs_len = screen_fmt_tabs(statbuf, statbuf_size, term_cols);
+    int header_len = screen_fmt_header(headbuf, headbuf_size, term_cols);
 
-    int rows_statline = stats_len / term_cols + 1;
+    int rows_tabline = tabs_len / term_cols + 1;
+    int rows_header = header_len / term_cols + 1;
     int rows_uiline = (strlen(st->prompt) + st->i_inputbuf - 1) / term_cols + 1;
-    int rows_screenbuf = term_rows - (rows_statline + rows_uiline);
+    int rows_screenbuf = term_rows - (rows_tabline + rows_header + rows_uiline);
 
     screen_fmt_to_buf(screenbuf, screenbuf_size, rows_screenbuf, term_cols);
 
     printf("\033 7" // Save cursor position
             "\033[0m\033[2J" // Reset colors, erase screen
             "\033[H\033[48;5;252m\033[2K" // Draw statline bg, lgray, top 
-            "\033[38;5;233m%s" // Draw statline text, dark gray
+            "\033[38;5;233m%s\033[0m" // Draw statline text, dark gray
+            "\033[1E%s" // One line down, print header txt
             "\033[0m\033[1E%s" // Reset color, print buffer next line
             "\033[%d;0H\033[48;5;27m\033[2K" // Draw input line blue bg
             "\033[38;5;190m%s" // Draw prompt, yellow
             "\033[38;5;15m%s" // Draw uibuf, white
             "\033[0m" // Reset colors
             "\033 8", // Restore cursor position
-            statbuf, screenbuf, term_rows - (rows_uiline - 1),
+            statbuf, headbuf, screenbuf, term_rows - (rows_uiline - 1),
             st->prompt, st->inputbuf);
 }
 

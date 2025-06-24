@@ -36,7 +36,7 @@ typedef struct screenlog_list {
 } screenlog_list;
 
 typedef struct screen {
-    char display_text[SCREEN_DISPLAY_TEXT_MAXLEN];
+    char topic[SCREEN_DISPLAY_TEXT_MAXLEN];
     screenlog_list scrlog;
     screen_ui_state ui_state;
     char name[CHANNEL_NAME_MAXLEN];
@@ -52,11 +52,10 @@ typedef struct format_toggles {
 
 
 /************************ INTERNAL SCR MGMT **********************************/
-// Returns -1 if the name was not found.
-static int internal__find_screen_by_name(const_str find_name);
 static void internal__set_active(size_t i_scr);
 static void internal__create_screen_at(size_t i_scr, const_str name);
 static int internal__find_open_slot(void);
+// Returns -1 if the name was not found.
 static int internal__find_screen(const_str find_name);
 static int internal__find_screen_startswith(const_str prefix);
 
@@ -123,7 +122,7 @@ static void screenlog_evict_min_to_free(
 
 /***************************** STATIC VARS ***********************************/
 static screen s_scr_home = {
-    .display_text = {"Not Connected"},
+    .topic = {"Not Connected"},
     .scrlog = { .max_size_bytes = SCREENLOG_DEFAULT_MAX_BYTES },
     .ui_state = {
         .prompt = "> ",
@@ -412,6 +411,19 @@ bool scrmgr_show_name_startswith(const_str prefix) {
     return scrmgr_show_index(i_scr);
 }
 
+bool scrmgr_set_topic(const_str scr_name, const_str topic) {
+    int i_scr = internal__find_screen(scr_name);
+    if (i_scr < 0) {
+        log_fmt(LOGLEVEL_WARNING,
+                "[scrmgr_set_topic] No screen with name '%s'", scr_name);
+        return false;
+    }
+    assert(i_scr < N_SCRSLOTS);
+
+    screen *scr = s_scrslots[i_scr];
+    return strcpy_s(scr->topic, sizeof(scr->topic), topic) == 0;
+}
+
 /*****************************************************************************/
 /*********************** INTERNAL SCR MGMT IMPLs *****************************/
 
@@ -474,6 +486,27 @@ static int internal__find_screen_startswith(const_str prefix) {
 
 /*****************************************************************************/
 /***************************** PUB FMT API ***********************************/
+
+int screen_fmt_header(char *buf, size_t bufsize, int term_cols) {
+    UNREFERENCED_PARAMETER(term_cols);
+
+    const_str topic = s_scr_active->topic;
+    size_t n_vis_chars = strlen_on_screen(topic);
+    // TODO: instead, take offset_end return and only draw to there
+//     calc_screen_offset(topic, 1, term_cols, &n_vis_chars, NULL, 0);
+
+
+    format_toggles toggles = { 0 };
+    size_t topic_len = strlen(topic);
+    size_t i_topic = 0, i_buf = 0;
+    while (topic[i_topic] != '\0')
+        translate_src_char_to_buf(
+              buf, &i_buf, bufsize, topic, &i_topic, topic_len, &toggles);
+    buf[i_buf] = '\0';
+
+    return n_vis_chars;
+}
+
 int screen_fmt_tabs(char *buf, size_t bufsize, int term_cols) {
     UNREFERENCED_PARAMETER(term_cols);
     // TODO: change formatting type for very small values of term_cols, down to

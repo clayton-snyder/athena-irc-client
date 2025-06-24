@@ -53,7 +53,10 @@ bool scrmgr_show_name(const_str scr_name);
 // case-insensitive. Returns false if there are no matches.
 bool scrmgr_show_name_startswith(const_str prefix);
 
+bool scrmgr_set_topic(const_str scr_name, const_str topic);
+
 int screen_fmt_tabs(char *buf, size_t bufsize, int term_cols);
+int screen_fmt_header(char *buf, size_t bufsize, int term_cols);
 
 // Writes the section (according to scroll) of the active screen's message log
 // that will fit in the specified number of rows and columns to the global

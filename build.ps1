@@ -6,7 +6,7 @@ param (
 )
 
 $output_dir = "built"
-$exe_filename = "client.exe";
+$exe_filename = "athena-irc.exe";
 
 if (-not(test-path "$output_dir")) {
     mkdir "$output_dir";

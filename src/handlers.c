@@ -31,6 +31,12 @@
 // IRC message handlers
 static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts);
 static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts);
+static bool handle_ircmsg_topic(ircmsg *const ircm);
+
+// Local command handlers
+static void handle_localcmd_channel(char *msg, SOCKET sock);
+static void handle_localcmd_join(char *msg, SOCKET sock);
+static void handle_localcmd_show(char *msg);
 
 // Screen formatters
 static char s_scrbuf[SCREENMSG_BUF_SIZE] = {0};
@@ -38,11 +44,6 @@ static bool screenfmt_default(char *const buf, size_t bufsize,
        const_str src, const_str cmd, const msglist *const params, const_str ts);
 static bool screenfmt_privmsg(char *const buf, size_t bufsize,
        const_str from, const_str msg, const_str ts, bool self);
-
-// Local command handlers
-static void handle_localcmd_channel(char *msg, SOCKET sock);
-static void handle_localcmd_join(char *msg, SOCKET sock);
-static void handle_localcmd_show(char *msg);
 
 // Utilities
 static int send_as_irc(SOCKET sock, const char* msg);
@@ -65,6 +66,9 @@ static int s_color256_text_server = 245;
 bool handle_ircmsg(ircmsg *const ircm, const_str ts) {
     if (strcmp(ircm->command, "PRIVMSG") == 0)
         return handle_ircmsg_privmsg(ircm, ts);
+    // TODO: change this to detect number and make handle_ircmsg_numeric()
+    if (strcmp(ircm->command, "332") == 0 || strcmp(ircm->command, "331") == 0)
+        return handle_ircmsg_topic(ircm);
 
     return handle_ircmsg_default(ircm, ts);
 }
@@ -87,6 +91,18 @@ static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts) {
     }
     
     return success;
+}
+
+static bool handle_ircmsg_topic(ircmsg *const ircm) {
+    assert(ircm != NULL);
+    assert(ircm->command != NULL);
+    assert(ircm->params.count == 3);
+
+    // First param is client name, we don't really care?
+    const_str channel = ircm->params.head->next->msg;
+    const_str topic = ircm->params.tail->msg;
+
+    return scrmgr_set_topic(channel, topic);
 }
 
 static bool handle_ircmsg_privmsg(ircmsg *const ircm, const_str ts) {
@@ -231,7 +247,7 @@ bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
     assert(sock != INVALID_SOCKET);
     log_fmt(LOGLEVEL_DEV, "[handle_user_command()] Processing '%s'", msg);
     
-    if (strcmp(msg, "BYE") == 0) {
+    if (strcmp(msg, "!quit") == 0) {
         try_send_as_irc(sock, "QUIT");
         scrmgr_deliver_copy("home", "Disconnecting...");
         return true;
