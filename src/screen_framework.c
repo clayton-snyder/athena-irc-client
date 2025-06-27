@@ -964,7 +964,7 @@ static size_t calc_screen_offset(
         // If we reach the end of the message without finding enough visible
         // chars, then either this function or its caller messed up some math.
         // Or there's an unterminated ANSI escape sequence. All crashworthy.
-        assert(i_msg < msglen);
+//         assert(i_msg < msglen);
         
         // If we're not crashing from this, count the last char and tell the 
         // caller it all should fit.

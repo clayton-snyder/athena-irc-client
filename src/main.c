@@ -16,11 +16,11 @@
 
 #define CODE_PAGE_UTF8 65001
 
-#define RECV_BUFF_LEN 1024 * 8
+#define RECV_BUF_LEN 1024 * 8
 
 // A longer input buffer helps because we can tell the user exactly how much
 // they need to reduce their message by as long as we can read it all.
-#define INPUT_BUFF_LEN 1024 * 4
+#define INPUT_BUF_LEN 1024 * 4
 
 // Needs to be large enough to hold all displayed characters plus all formatting
 // data from ANSI escape codes. The screen buff is re-used so there's little 
@@ -35,7 +35,7 @@
 
 // Longest timestamp we'll write is: YYYY-MM-DD HH:MM:SS + \0.
 // Usually it will just be the time, though.
-#define TIMESTAMP_BUFF_SIZE 20
+#define TIMESTAMP_BUF_SIZE 20
 
 // TODO: remove these when this stuff is moved into handlers
 #define MAX_NICK_LEN 9
@@ -296,7 +296,7 @@ int main(int argc, char* argv[]) {
     char drawbuf_header[STATLINE_BUF_SIZE] = { 0 };
 
     while (!bye) {
-        char timestamp_buf[TIMESTAMP_BUFF_SIZE];
+        char timestamp_buf[TIMESTAMP_BUF_SIZE];
         msgutils_get_timestamp(timestamp_buf, sizeof(timestamp_buf), false,
                 TIMESTAMP_FORMAT_TIME_ONLY);
 
@@ -444,10 +444,6 @@ static void draw_screen(HANDLE h_stdout,
     int term_rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     int term_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-//     int tabs_len = sprintf_s(statbuf, statbuf_size,
-//             "%dx%d  scr:%d",
-//             term_rows, term_cols, st->scroll);
-//  TODO: rename to match tabs
     int tabs_len = screen_fmt_tabs(statbuf, statbuf_size, term_cols);
     int header_len = screen_fmt_header(headbuf, headbuf_size, term_cols);
 
@@ -475,16 +471,16 @@ static void draw_screen(HANDLE h_stdout,
 
 DWORD WINAPI thread_main_recv(LPVOID data) {
     SOCKET *sock = (SOCKET *)data;
-    char recv_buff[RECV_BUFF_LEN];
+    char recv_buff[RECV_BUF_LEN];
     int bytes_received = 0, i_buff_offset = 0;
     while ((bytes_received = recv(
                     *sock,
                     recv_buff + i_buff_offset,
-                    RECV_BUFF_LEN - i_buff_offset,
+                    RECV_BUF_LEN - i_buff_offset,
                     0)) > 0)
     {
         i_buff_offset += bytes_received;
-        if (i_buff_offset >= RECV_BUFF_LEN) {
+        if (i_buff_offset >= RECV_BUF_LEN) {
             log(LOGLEVEL_ERROR, "[thread_main_recv] FATAL: Ran out of buffer.");
             // TODO: communiate failure and clean up
             return 23;
@@ -528,7 +524,7 @@ DWORD WINAPI thread_main_recv(LPVOID data) {
                     msgs.count);
         }
 
-        assert(i_buff_offset < RECV_BUFF_LEN);
+        assert(i_buff_offset < RECV_BUF_LEN);
         assert(i_last_delim < i_buff_offset);
 
         // Move any buffer data after the last delim to the beginning.
