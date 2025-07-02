@@ -330,10 +330,8 @@ int main(int argc, char* argv[]) {
             if (bye) break;
         }
         msglist_free(&msgs_ui);
-        // TODO: do we still have out msgs??
 
         // Update the UI
-        // TODO: read bool and exit if appropriate
         process_console_input(h_stdin);
 
         draw_screen(h_stdout,
@@ -341,6 +339,7 @@ int main(int argc, char* argv[]) {
                 drawbuf_statline, sizeof(drawbuf_statline),
                 drawbuf_header, sizeof(drawbuf_header));
         
+        // TODO: if debug, or option?
         fflush(logfile);
     }
 
