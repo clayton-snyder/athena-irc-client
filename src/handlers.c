@@ -11,22 +11,17 @@
 #include <stdio.h>
 #include <string.h>
 
-/* BUF ALLOCATION GUIDE:
- * buffer to hold snprintf result: char cmd_buf[MAX_CMD_LEN + 1]
- * buffer to send to IRC server: char cmd_buf[IRC_MSG_BUF_LEN]
- */
-
 // Max IRC message allowed is 512 including the CRLF delimiter. This macro value
 // should be used when validating strlen() of messages prior to preparing them
 // with CRLF delimiter. Use this macro value + 1 when allocating buffers to 
 // prepare messages to pass to send_as_irc().
 #define MAX_CMD_LEN 510
 
-#define CHANNEL_PREFIXES "&#+!"
-
 // Use this to allocate buffers that will be sent to the IRC server. The two 
 // extra bytes are reserved for CR and LF.
 #define IRC_MSG_BUF_LEN (MAX_CMD_LEN + 2)
+
+#define CHANNEL_PREFIXES "&#+!"
 
 // IRC message handlers
 static bool handle_ircmsg_default(ircmsg *const ircm, const_str ts);
@@ -240,8 +235,7 @@ static bool screenfmt_privmsg_error(char *const buf, size_t bufsize,
 /************************* LOCALCMD HANDLER IMPLs ****************************/
 
 // Returns true if program should exit.
-// TODO: Remove nick and channel params. Access those from a query or state
-// struct when needed
+// TODO: Remove nick param. Access from a query or state struct when needed
 bool handle_user_command(char *msg, const_str nick, SOCKET sock, const_str ts) {
     assert(msg != NULL);
     assert(sock != INVALID_SOCKET);
@@ -438,8 +432,6 @@ static int send_as_irc(SOCKET sock, const char* msg) {
 }
 
 static bool try_send_as_irc(SOCKET sock, const char* fmt, ...) {
-    // TODO: validate if this works with empty va_list. I think it just has to
-    // match the number of formatters in fmt...
     va_list fmt_args;
     va_start(fmt_args, fmt);
     // vsnprintf writes up to bufsz - 1 characters, plus the null term. Ergo

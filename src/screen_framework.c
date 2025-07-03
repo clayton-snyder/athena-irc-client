@@ -556,7 +556,6 @@ int screen_fmt_tabs(char *buf, size_t bufsize, int term_cols) {
 int screen_fmt_to_buf(char *buf, size_t bufsize, int buf_rows, int term_cols) {
     assert(buf != NULL);
     assert(s_scr_active != NULL);
-    // TODO: do we actually want to assert rows/cols > 0?
     assert(buf_rows > 0);
     assert(term_cols > 0);
 
